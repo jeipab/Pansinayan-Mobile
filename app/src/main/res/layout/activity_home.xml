@@ -1,0 +1,71 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:gravity="center"
+    android:padding="32dp"
+    android:background="@android:color/white">
+
+    <!-- App Logo/Title -->
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="PANSINAYAN"
+        android:textSize="48sp"
+        android:textStyle="bold"
+        android:textColor="#1976D2"
+        android:letterSpacing="0.05"
+        android:gravity="center" />
+
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:text="Filipino Sign Language Recognition"
+        android:textSize="14sp"
+        android:textColor="#666666"
+        android:gravity="center" />
+
+    <!-- Start Recognition Button -->
+    <com.google.android.material.button.MaterialButton
+        android:id="@+id/btn_start_recognition"
+        android:layout_width="250dp"
+        android:layout_height="60dp"
+        android:layout_marginTop="64dp"
+        android:text="Start Recognition"
+        android:textSize="18sp"
+        android:textAllCaps="false"
+        app:cornerRadius="30dp"
+        app:icon="@android:drawable/ic_menu_camera"
+        app:iconGravity="textStart"
+        app:iconPadding="8dp" />
+
+    <!-- View History Button -->
+    <com.google.android.material.button.MaterialButton
+        android:id="@+id/btn_view_history"
+        android:layout_width="250dp"
+        android:layout_height="60dp"
+        android:layout_marginTop="16dp"
+        android:text="View History"
+        android:textSize="18sp"
+        android:textAllCaps="false"
+        app:cornerRadius="30dp"
+        app:icon="@android:drawable/ic_menu_recent_history"
+        app:iconGravity="textStart"
+        app:iconPadding="8dp"
+        style="@style/Widget.MaterialComponents.Button.OutlinedButton" />
+
+    <!-- App Version Info -->
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="48dp"
+        android:text="Version 1.0"
+        android:textSize="12sp"
+        android:textColor="#999999" />
+
+</LinearLayout>
+
