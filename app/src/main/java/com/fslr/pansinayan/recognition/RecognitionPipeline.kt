@@ -71,7 +71,7 @@ class RecognitionPipeline(
         try {
             Log.i(TAG, "Initializing recognition pipeline...")
 
-            cameraManager = CameraManager(context, lifecycleOwner, previewView, targetFps = 15)
+            cameraManager = CameraManager(context, lifecycleOwner, previewView, targetFps = 30)
             mediaPipeProcessor = MediaPipeProcessor(context, this)
             bufferManager = SequenceBufferManager(windowSize = 90, maxGap = 5)
             modelRunner = TFLiteModelRunner(context, modelPath = "sign_transformer_quant.tflite")
