@@ -22,7 +22,8 @@
         <activity
             android:name=".activities.HomeActivity"
             android:exported="true"
-            android:screenOrientation="portrait">
+            android:screenOrientation="portrait"
+            android:theme="@style/Theme.SignLanguageRecognition.NoActionBar">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
@@ -33,13 +34,15 @@
         <activity
             android:name=".activities.MainActivity"
             android:exported="false"
-            android:screenOrientation="portrait" />
+            android:screenOrientation="portrait"
+            android:theme="@style/Theme.SignLanguageRecognition.NoActionBar" />
 
         <!-- History Activity -->
         <activity
             android:name=".activities.HistoryActivity"
             android:exported="false"
-            android:screenOrientation="portrait" />
+            android:screenOrientation="portrait"
+            android:theme="@style/Theme.SignLanguageRecognition.NoActionBar" />
     </application>
 
 </manifest>

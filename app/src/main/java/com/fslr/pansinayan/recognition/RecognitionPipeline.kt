@@ -119,7 +119,13 @@ class RecognitionPipeline(
 
                 // Step 1: Extract keypoints from frame
                 val keypoints = mediaPipeProcessor.extractKeypoints(frame)
-                
+
+                if (keypoints == null) {
+                    Log.w(TAG, "Failed to extract keypoints from frame $currentFrame")
+                } else {
+                    Log.d(TAG, "Successfully extracted keypoints from frame $currentFrame")
+                }
+
                 // Step 2: Detect occlusion
                 val isOccluded = keypoints?.let { mediaPipeProcessor.detectOcclusion(it) } ?: false
                 

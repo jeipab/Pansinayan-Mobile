@@ -57,6 +57,14 @@ class TFLiteModelRunner(
      */
     private fun loadModel() {
         try {
+            // Check if model file exists
+            val assetList = context.assets.list("") ?: emptyArray()
+            if (!assetList.contains(modelPath)) {
+                Log.e(TAG, "Model file not found: $modelPath")
+                Log.d(TAG, "Available assets: ${assetList.joinToString()}")
+                return
+            }
+
             val modelBuffer = loadModelFile()
             val options = Interpreter.Options()
 

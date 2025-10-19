@@ -118,15 +118,25 @@ class HistoryActivity : AppCompatActivity() {
     private fun loadHistory() {
         lifecycleScope.launch(Dispatchers.IO) {
             try {
-                val history = database.historyDao().getAllHistory()
+                Log.d(TAG, "Loading history from database...")
+                val historyDao = database.historyDao()
+                if (historyDao == null) {
+                    Log.e(TAG, "HistoryDao is null")
+                    return@launch
+                }
+
+                val history = historyDao.getAllHistory()
+                Log.d(TAG, "Retrieved ${history.size} history items")
+
                 withContext(Dispatchers.Main) {
                     adapter.submitList(history)
                     Log.i(TAG, "Loaded ${history.size} history items")
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to load history", e)
+                e.printStackTrace()
                 withContext(Dispatchers.Main) {
-                    Toast.makeText(this@HistoryActivity, "Failed to load history", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(this@HistoryActivity, "Failed to load history: ${e.message}", Toast.LENGTH_LONG).show()
                 }
             }
         }

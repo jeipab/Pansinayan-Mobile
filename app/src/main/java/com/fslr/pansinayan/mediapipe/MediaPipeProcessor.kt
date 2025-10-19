@@ -56,6 +56,17 @@ class MediaPipeProcessor(private val context: Context) {
      */
     private fun initializeMediaPipe() {
         try {
+            // Check if model files exist
+            val assetList = context.assets.list("") ?: emptyArray()
+            Log.d(TAG, "Available assets: ${assetList.joinToString()}")
+
+            if (!assetList.contains("hand_landmarker.task")) {
+                Log.e(TAG, "hand_landmarker.task not found in assets")
+            }
+            if (!assetList.contains("pose_landmarker_full.task")) {
+                Log.e(TAG, "pose_landmarker_full.task not found in assets")
+            }
+
             // Initialize Hand Landmarker
             val handOptions = HandLandmarkerOptions.builder()
                 .setBaseOptions(
@@ -71,7 +82,7 @@ class MediaPipeProcessor(private val context: Context) {
                 .build()
 
             handLandmarker = HandLandmarker.createFromOptions(context, handOptions)
-            Log.i(TAG, "Hand landmarker initialized")
+            Log.i(TAG, "Hand landmarker initialized successfully")
 
             // Initialize Pose Landmarker
             val poseOptions = PoseLandmarkerOptions.builder()
@@ -87,10 +98,11 @@ class MediaPipeProcessor(private val context: Context) {
                 .build()
 
             poseLandmarker = PoseLandmarker.createFromOptions(context, poseOptions)
-            Log.i(TAG, "Pose landmarker initialized")
+            Log.i(TAG, "Pose landmarker initialized successfully")
 
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to initialize MediaPipe", e)
+            Log.e(TAG, "Failed to initialize MediaPipe: ${e.message}", e)
+            e.printStackTrace()
         }
     }
 
@@ -108,6 +120,17 @@ class MediaPipeProcessor(private val context: Context) {
      */
     fun extractKeypoints(bitmap: Bitmap): FloatArray? {
         try {
+            // Check if landmarkers are initialized
+            if (handLandmarker == null || poseLandmarker == null) {
+                Log.w(TAG, "Landmarkers not initialized, attempting to reinitialize...")
+                initializeMediaPipe()
+
+                if (handLandmarker == null || poseLandmarker == null) {
+                    Log.e(TAG, "Failed to initialize landmarkers")
+                    return null
+                }
+            }
+
             val mpImage = BitmapImageBuilder(bitmap).build()
 
             // Extract pose landmarks

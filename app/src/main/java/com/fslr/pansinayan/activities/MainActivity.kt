@@ -1,5 +1,6 @@
 package com.fslr.pansinayan.activities
 import com.fslr.pansinayan.R
+import android.content.Intent
 
 import android.Manifest
 import android.content.pm.PackageManager
@@ -377,6 +378,15 @@ class MainActivity : AppCompatActivity() {
                 // TODO: Show explanation dialog
             }
         }
+    }
+
+    override fun onBackPressed() {
+        super.onBackPressed()
+        // Return to home instead of exiting app
+        val intent = Intent(this, HomeActivity::class.java)
+        intent.flags = Intent.FLAG_ACTIVITY_CLEAR_TOP
+        startActivity(intent)
+        finish()
     }
 
     // ================== UI Actions (Optional) ==================
