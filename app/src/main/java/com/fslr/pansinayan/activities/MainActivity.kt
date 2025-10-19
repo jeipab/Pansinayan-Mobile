@@ -1,4 +1,5 @@
 package com.fslr.pansinayan.activities
+import com.fslr.pansinayan.R
 
 import android.Manifest
 import android.content.pm.PackageManager

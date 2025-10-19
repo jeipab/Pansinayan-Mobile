@@ -3,7 +3,6 @@ package com.fslr.pansinayan.inference
 import android.content.Context
 import android.util.Log
 import org.tensorflow.lite.Interpreter
-import org.tensorflow.lite.gpu.CompatibilityList
 import org.tensorflow.lite.gpu.GpuDelegate
 import java.io.FileInputStream
 import java.nio.ByteBuffer
@@ -62,16 +61,13 @@ class TFLiteModelRunner(
             val options = Interpreter.Options()
 
             // Try to use GPU delegate for faster inference
-            val compatList = CompatibilityList()
-            if (compatList.isDelegateSupportedOnThisDevice) {
-                val delegateOptions = compatList.bestOptionsForThisDevice
-                gpuDelegate = GpuDelegate(delegateOptions)
+            try {
+                gpuDelegate = GpuDelegate()
                 options.addDelegate(gpuDelegate)
-                Log.i(TAG, "GPU delegate enabled")
-            } else {
-                // Fallback to CPU with multiple threads
+                Log.i(TAG, "GPU delegate enabled for TensorFlow Lite")
+            } catch (e: Exception) {
+                Log.w(TAG, "GPU delegate not available, using CPU threads instead", e)
                 options.setNumThreads(4)
-                Log.i(TAG, "Using CPU inference with 4 threads (GPU not available)")
             }
 
             interpreter = Interpreter(modelBuffer, options)
