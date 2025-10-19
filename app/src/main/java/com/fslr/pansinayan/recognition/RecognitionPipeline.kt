@@ -110,7 +110,7 @@ class RecognitionPipeline(
     }
 
     private fun processFrame(imageProxy: ImageProxy) {
-        mediaPipeProcessor.detectLiveStream(imageProxy, isFrontCamera = true)
+        mediaPipeProcessor.detectLiveStream(imageProxy, isFrontCamera = cameraManager.isFrontCamera())
     }
 
     override fun onKeypointsExtracted(keypoints: FloatArray?, imageWidth: Int, imageHeight: Int) {
@@ -255,6 +255,21 @@ class RecognitionPipeline(
     fun resume() {
         // Implement resume logic if needed
         Log.i(TAG, "Pipeline resumed")
+    }
+
+    /**
+     * Switch between front and back camera.
+     */
+    fun switchCamera() {
+        cameraManager.switchCamera()
+        Log.i(TAG, "Camera switched to ${if (isFrontCamera()) "front" else "back"}")
+    }
+
+    /**
+     * Check if currently using front camera.
+     */
+    fun isFrontCamera(): Boolean {
+        return cameraManager.isFrontCamera()
     }
 }
 

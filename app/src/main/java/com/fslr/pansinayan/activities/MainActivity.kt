@@ -61,6 +61,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var occlusionIndicator: View
     private lateinit var skeletonToggle: SwitchMaterial
     private lateinit var fabRecord: FloatingActionButton
+    private lateinit var fabSwitchCamera: FloatingActionButton
     private lateinit var radioModelSelection: RadioGroup
 
     // Recognition pipeline
@@ -93,6 +94,7 @@ class MainActivity : AppCompatActivity() {
         occlusionIndicator = findViewById(R.id.occlusion_indicator)
         skeletonToggle = findViewById(R.id.toggle_skeleton)
         fabRecord = findViewById(R.id.fab_record)
+        fabSwitchCamera = findViewById(R.id.fab_switch_camera)
         radioModelSelection = findViewById(R.id.radio_model_selection)
 
         // Initialize database
@@ -148,6 +150,11 @@ class MainActivity : AppCompatActivity() {
         fabRecord.setOnClickListener {
             toggleRecording()
         }
+
+        // Camera switch button
+        fabSwitchCamera.setOnClickListener {
+            switchCamera()
+        }
     }
 
     /**
@@ -183,6 +190,18 @@ class MainActivity : AppCompatActivity() {
             fabRecord.setImageResource(R.drawable.ic_record)
             Toast.makeText(this, "Recording stopped", Toast.LENGTH_SHORT).show()
             Log.i(TAG, "Recording stopped")
+        }
+    }
+
+    /**
+     * Switch between front and back camera.
+     */
+    private fun switchCamera() {
+        if (::recognitionPipeline.isInitialized) {
+            recognitionPipeline.switchCamera()
+            val cameraName = if (recognitionPipeline.isFrontCamera()) "Front" else "Back"
+            Toast.makeText(this, "$cameraName camera", Toast.LENGTH_SHORT).show()
+            Log.i(TAG, "Switched to $cameraName camera")
         }
     }
 

@@ -41,6 +41,9 @@ class CameraManager(
     private var imageAnalyzer: ImageAnalysis? = null
     private var frameCallback: ((ImageProxy) -> Unit)? = null
     
+    // Camera selection
+    private var currentCameraSelector: CameraSelector = CameraSelector.DEFAULT_FRONT_CAMERA
+    
     // Frame rate control
     private var lastProcessedTime = 0L
     private val frameIntervalMs = 1000L / targetFps
@@ -92,22 +95,20 @@ class CameraManager(
                 it.setAnalyzer(cameraExecutor, FrameAnalyzer())
             }
 
-        // Use front camera for sign language (user faces camera)
-        val cameraSelector = CameraSelector.DEFAULT_FRONT_CAMERA
-
         try {
             // Unbind all use cases before rebinding
             cameraProvider.unbindAll()
 
-            // Bind use cases to camera
+            // Bind use cases to camera with current camera selector
             cameraProvider.bindToLifecycle(
                 lifecycleOwner,
-                cameraSelector,
+                currentCameraSelector,
                 preview,
                 imageAnalyzer
             )
 
-            Log.i(TAG, "Camera use cases bound successfully")
+            val cameraName = if (isFrontCamera()) "front" else "back"
+            Log.i(TAG, "Camera use cases bound successfully ($cameraName camera)")
         } catch (e: Exception) {
             Log.e(TAG, "Use case binding failed", e)
         }
@@ -162,6 +163,31 @@ class CameraManager(
      */
     fun getStats(): Pair<Int, Int> {
         return Pair(processedFrames, totalFrames)
+    }
+
+    /**
+     * Switch between front and back camera.
+     * Automatically rebinds camera use cases.
+     */
+    fun switchCamera() {
+        currentCameraSelector = if (isFrontCamera()) {
+            CameraSelector.DEFAULT_BACK_CAMERA
+        } else {
+            CameraSelector.DEFAULT_FRONT_CAMERA
+        }
+        
+        val cameraName = if (isFrontCamera()) "front" else "back"
+        Log.i(TAG, "Switching to $cameraName camera")
+        
+        // Rebind camera with new selector
+        bindCameraUseCases()
+    }
+
+    /**
+     * Check if currently using front camera.
+     */
+    fun isFrontCamera(): Boolean {
+        return currentCameraSelector == CameraSelector.DEFAULT_FRONT_CAMERA
     }
 }
 

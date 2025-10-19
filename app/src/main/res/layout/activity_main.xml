@@ -121,6 +121,18 @@
             android:textColor="@android:color/white" />
     </RadioGroup>
 
+    <!-- Camera Switch Button (FAB - Top Right, below occlusion indicator) -->
+    <com.google.android.material.floatingactionbutton.FloatingActionButton
+        android:id="@+id/fab_switch_camera"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_margin="16dp"
+        android:src="@android:drawable/ic_menu_camera"
+        android:contentDescription="Switch Camera"
+        app:layout_constraintTop_toBottomOf="@id/occlusion_indicator"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:fabSize="mini" />
+
     <!-- Record Button (FAB - Bottom Right) -->
     <com.google.android.material.floatingactionbutton.FloatingActionButton
         android:id="@+id/fab_record"
