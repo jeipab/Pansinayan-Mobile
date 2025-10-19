@@ -2,326 +2,258 @@ package com.fslr.pansinayan.mediapipe
 
 import android.content.Context
 import android.graphics.Bitmap
+import android.graphics.Matrix
+import android.os.SystemClock
 import android.util.Log
+import androidx.camera.core.ImageProxy
 import com.google.mediapipe.framework.image.BitmapImageBuilder
+import com.google.mediapipe.framework.image.MPImage
 import com.google.mediapipe.tasks.core.BaseOptions
 import com.google.mediapipe.tasks.vision.core.RunningMode
 import com.google.mediapipe.tasks.vision.handlandmarker.HandLandmarker
-import com.google.mediapipe.tasks.vision.handlandmarker.HandLandmarker.HandLandmarkerOptions
+import com.google.mediapipe.tasks.vision.handlandmarker.HandLandmarkerResult
 import com.google.mediapipe.tasks.vision.poselandmarker.PoseLandmarker
-import com.google.mediapipe.tasks.vision.poselandmarker.PoseLandmarker.PoseLandmarkerOptions
+import com.google.mediapipe.tasks.vision.poselandmarker.PoseLandmarkerResult
 
-/**
- * Processes frames with MediaPipe to extract keypoints.
- * 
- * Extracts 78 keypoints total:
- * - Pose: 25 upper body points (50 values)
- * - Left Hand: 21 points (42 values)
- * - Right Hand: 21 points (42 values)
- * - Face: 11 points (22 values)
- * 
- * Output: FloatArray of 156 values (78 keypoints × 2 coordinates: x, y)
- * 
- * Usage:
- *   val processor = MediaPipeProcessor(context)
- *   val keypoints = processor.extractKeypoints(bitmap)
- *   // keypoints is FloatArray[156] or null if detection failed
- */
-class MediaPipeProcessor(private val context: Context) {
+class MediaPipeProcessor(
+    private val context: Context,
+    private val listener: KeypointListener? = null
+) {
     companion object {
         private const val TAG = "MediaPipeProcessor"
         
-        // Upper body pose indices (25 points out of 33 total pose landmarks)
-        // Indices: face (0-10), arms/shoulders (11-16), torso (17-22), hips (23-24)
         private val POSE_UPPER_INDICES = listOf(
-            0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10,  // Face landmarks
-            11, 12, 13, 14, 15, 16,             // Arms and shoulders
-            17, 18, 19, 20, 21, 22,             // Torso
-            23, 24                              // Hips
+            0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10,
+            11, 12, 13, 14, 15, 16,
+            17, 18, 19, 20, 21, 22,
+            23, 24
         )
+    }
+
+    interface KeypointListener {
+        fun onKeypointsExtracted(keypoints: FloatArray?, imageWidth: Int, imageHeight: Int)
+        fun onError(error: String)
     }
 
     private var handLandmarker: HandLandmarker? = null
     private var poseLandmarker: PoseLandmarker? = null
     
+    private var latestPoseResult: PoseLandmarkerResult? = null
+    private var latestHandResult: HandLandmarkerResult? = null
+    private var latestImageWidth = 0
+    private var latestImageHeight = 0
+    
     private var successCount = 0
     private var failureCount = 0
+    private var frameCount = 0
 
     init {
-        initializeMediaPipe()
+        setupLandmarkers()
     }
 
-    /**
-     * Initialize MediaPipe hand and pose landmarkers.
-     */
-    private fun initializeMediaPipe() {
+    private fun setupLandmarkers() {
         try {
-            // Check if model files exist
-            val assetList = context.assets.list("") ?: emptyArray()
-            Log.d(TAG, "Available assets: ${assetList.joinToString()}")
-
-            if (!assetList.contains("hand_landmarker.task")) {
-                Log.e(TAG, "hand_landmarker.task not found in assets")
-            }
-            if (!assetList.contains("pose_landmarker_full.task")) {
-                Log.e(TAG, "pose_landmarker_full.task not found in assets")
-            }
-
-            // Initialize Hand Landmarker
-            val handOptions = HandLandmarkerOptions.builder()
-                .setBaseOptions(
-                    BaseOptions.builder()
-                        .setModelAssetPath("hand_landmarker.task")
-                        .build()
-                )
-                .setRunningMode(RunningMode.IMAGE)
-                .setNumHands(2)  // Detect both hands
-                .setMinHandDetectionConfidence(0.5f)
-                .setMinHandPresenceConfidence(0.5f)
-                .setMinTrackingConfidence(0.5f)
+            val handOptions = HandLandmarker.HandLandmarkerOptions.builder()
+                .setBaseOptions(BaseOptions.builder().setModelAssetPath("hand_landmarker.task").build())
+                .setRunningMode(RunningMode.LIVE_STREAM)
+                .setNumHands(2)
+                .setMinHandDetectionConfidence(0.3f)
+                .setMinHandPresenceConfidence(0.3f)
+                .setMinTrackingConfidence(0.3f)
+                .setResultListener(this::onHandResult)
+                .setErrorListener { error -> listener?.onError(error.message ?: "Hand detection error") }
                 .build()
 
             handLandmarker = HandLandmarker.createFromOptions(context, handOptions)
-            Log.i(TAG, "Hand landmarker initialized successfully")
 
-            // Initialize Pose Landmarker
-            val poseOptions = PoseLandmarkerOptions.builder()
-                .setBaseOptions(
-                    BaseOptions.builder()
-                        .setModelAssetPath("pose_landmarker_full.task")
-                        .build()
-                )
-                .setRunningMode(RunningMode.IMAGE)
-                .setMinPoseDetectionConfidence(0.5f)
-                .setMinPosePresenceConfidence(0.5f)
-                .setMinTrackingConfidence(0.5f)
+            val poseOptions = PoseLandmarker.PoseLandmarkerOptions.builder()
+                .setBaseOptions(BaseOptions.builder().setModelAssetPath("pose_landmarker_full.task").build())
+                .setRunningMode(RunningMode.LIVE_STREAM)
+                .setMinPoseDetectionConfidence(0.3f)
+                .setMinPosePresenceConfidence(0.3f)
+                .setMinTrackingConfidence(0.3f)
+                .setResultListener(this::onPoseResult)
+                .setErrorListener { error -> listener?.onError(error.message ?: "Pose detection error") }
                 .build()
 
             poseLandmarker = PoseLandmarker.createFromOptions(context, poseOptions)
-            Log.i(TAG, "Pose landmarker initialized successfully")
-
+            
+            Log.i(TAG, "MediaPipe initialized successfully")
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to initialize MediaPipe: ${e.message}", e)
-            e.printStackTrace()
+            Log.e(TAG, "Failed to initialize MediaPipe", e)
+            listener?.onError("Initialization failed: ${e.message}")
         }
     }
 
-    /**
-     * Extract keypoints from a bitmap frame.
-     * 
-     * Returns FloatArray of 156 values structured as:
-     * - [0-49]: Pose (25 points × 2 coords)
-     * - [50-91]: Left hand (21 points × 2 coords)
-     * - [92-133]: Right hand (21 points × 2 coords)
-     * - [134-155]: Face (11 points × 2 coords)
-     * 
-     * @param bitmap Input frame
-     * @return FloatArray[156] or null if extraction fails
-     */
-    fun extractKeypoints(bitmap: Bitmap): FloatArray? {
+    fun detectLiveStream(imageProxy: ImageProxy, isFrontCamera: Boolean = true) {
+        frameCount++
+        
+        if (frameCount <= 3) {
+            Log.d(TAG, "detectLiveStream called: frame $frameCount, ${imageProxy.width}x${imageProxy.height}, format: ${imageProxy.format}")
+        }
+        
         try {
-            // Check if landmarkers are initialized
-            if (handLandmarker == null || poseLandmarker == null) {
-                Log.w(TAG, "Landmarkers not initialized, attempting to reinitialize...")
-                initializeMediaPipe()
-
-                if (handLandmarker == null || poseLandmarker == null) {
-                    Log.e(TAG, "Failed to initialize landmarkers")
-                    return null
-                }
-            }
-
-            val mpImage = BitmapImageBuilder(bitmap).build()
-
-            // Extract pose landmarks
-            val poseResult = poseLandmarker?.detect(mpImage)
-            val poseLandmarks = poseResult?.landmarks()?.firstOrNull()
-
-            // Extract hand landmarks
-            val handResult = handLandmarker?.detect(mpImage)
-            val handLandmarks = handResult?.landmarks() ?: emptyList()
-            val handedness = handResult?.handednesses() ?: emptyList()
-
-            // Separate left and right hands
-            var leftHandLandmarks: List<com.google.mediapipe.tasks.components.containers.NormalizedLandmark>? = null
-            var rightHandLandmarks: List<com.google.mediapipe.tasks.components.containers.NormalizedLandmark>? = null
-
-            for (i in handLandmarks.indices) {
-                val hand = handLandmarks[i]
-                val handLabel = handedness.getOrNull(i)?.firstOrNull()?.categoryName()
-
-                when (handLabel) {
-                    "Left" -> leftHandLandmarks = hand
-                    "Right" -> rightHandLandmarks = hand
-                }
-            }
-
-            // Build 156D keypoint array
-            val keypoints = FloatArray(156) { 0f }
-            var idx = 0
-
-            // 1. Pose landmarks (25 points × 2 = 50 values)
-            if (poseLandmarks != null && poseLandmarks.size >= 33) {
-                for (poseIdx in POSE_UPPER_INDICES) {
-                    if (poseIdx < poseLandmarks.size) {
-                        val landmark = poseLandmarks[poseIdx]
-                        keypoints[idx++] = landmark.x()
-                        keypoints[idx++] = landmark.y()
-                    } else {
-                        keypoints[idx++] = 0f
-                        keypoints[idx++] = 0f
-                    }
-                }
-            } else {
-                // No pose detected - fill with zeros
-                idx += 50
-            }
-
-            // 2. Left hand landmarks (21 points × 2 = 42 values)
-            if (leftHandLandmarks != null && leftHandLandmarks.size >= 21) {
-                for (i in 0 until 21) {
-                    val landmark = leftHandLandmarks[i]
-                    keypoints[idx++] = landmark.x()
-                    keypoints[idx++] = landmark.y()
-                }
-            } else {
-                // No left hand detected - fill with zeros
-                idx += 42
-            }
-
-            // 3. Right hand landmarks (21 points × 2 = 42 values)
-            if (rightHandLandmarks != null && rightHandLandmarks.size >= 21) {
-                for (i in 0 until 21) {
-                    val landmark = rightHandLandmarks[i]
-                    keypoints[idx++] = landmark.x()
-                    keypoints[idx++] = landmark.y()
-                }
-            } else {
-                // No right hand detected - fill with zeros
-                idx += 42
-            }
-
-            // 4. Face landmarks (11 points × 2 = 22 values)
-            // Note: For simplicity, using zeros. In production, you can:
-            // - Use FaceLandmarker from MediaPipe
-            // - Extract face points from pose landmarks (first 11 pose points)
-            // - Or leave as zeros if face not critical for your signs
-            idx += 22
-
-            successCount++
+            val bitmapBuffer = Bitmap.createBitmap(
+                imageProxy.width,
+                imageProxy.height,
+                Bitmap.Config.ARGB_8888
+            )
             
-            // Log periodically
-            if (successCount % 100 == 0) {
-                Log.d(TAG, "Keypoint extraction stats: $successCount success / $failureCount failures")
+            imageProxy.use { bitmapBuffer.copyPixelsFromBuffer(imageProxy.planes[0].buffer) }
+            imageProxy.close()
+
+            val matrix = Matrix().apply {
+                postRotate(imageProxy.imageInfo.rotationDegrees.toFloat())
+                if (isFrontCamera) {
+                    postScale(-1f, 1f, imageProxy.width.toFloat(), imageProxy.height.toFloat())
+                }
+            }
+            
+            val rotatedBitmap = Bitmap.createBitmap(
+                bitmapBuffer, 0, 0, bitmapBuffer.width, bitmapBuffer.height, matrix, true
+            )
+
+            if (frameCount <= 3) {
+                Log.d(TAG, "Bitmap created: ${rotatedBitmap.width}x${rotatedBitmap.height}, config: ${rotatedBitmap.config}")
             }
 
-            return keypoints
+            val mpImage = BitmapImageBuilder(rotatedBitmap).build()
+            val frameTime = SystemClock.uptimeMillis()
 
+            if (poseLandmarker != null && handLandmarker != null) {
+                poseLandmarker?.detectAsync(mpImage, frameTime)
+                handLandmarker?.detectAsync(mpImage, frameTime)
+                
+                if (frameCount <= 3) {
+                    Log.d(TAG, "Sent to MediaPipe at time: $frameTime")
+                }
+            } else {
+                Log.e(TAG, "Landmarkers are null! pose: ${poseLandmarker != null}, hand: ${handLandmarker != null}")
+            }
+            
         } catch (e: Exception) {
             failureCount++
-            Log.e(TAG, "Keypoint extraction failed", e)
-            return null
+            Log.e(TAG, "Detection failed", e)
+            listener?.onError("Detection failed: ${e.message}")
         }
     }
 
-    /**
-     * Release MediaPipe resources.
-     * Call this when done with the processor.
-     */
+    private fun onPoseResult(result: PoseLandmarkerResult, input: MPImage) {
+        latestPoseResult = result
+        latestImageWidth = input.width
+        latestImageHeight = input.height
+        
+        val hasPose = result.landmarks().isNotEmpty()
+        if (frameCount <= 3) {
+            Log.d(TAG, "Pose result: $hasPose poses detected")
+        }
+        
+        processResults()
+    }
+
+    private fun onHandResult(result: HandLandmarkerResult, input: MPImage) {
+        latestHandResult = result
+        
+        val hasHands = result.landmarks().isNotEmpty()
+        if (frameCount <= 3) {
+            Log.d(TAG, "Hand result: ${result.landmarks().size} hands detected")
+        }
+        
+        processResults()
+    }
+
+    private fun processResults() {
+        val keypoints = extractKeypoints()
+        
+        successCount++
+        listener?.onKeypointsExtracted(keypoints, latestImageWidth, latestImageHeight)
+        
+        if (successCount % 30 == 0) {
+            Log.d(TAG, "Processed $successCount frames")
+        }
+    }
+
+    private fun extractKeypoints(): FloatArray {
+        val keypoints = FloatArray(156) { 0f }
+        var idx = 0
+
+        // Pose landmarks (25 points × 2 = 50 values)
+        val poseLandmarks = latestPoseResult?.landmarks()?.firstOrNull()
+        if (poseLandmarks != null && poseLandmarks.size >= 33) {
+            for (poseIdx in POSE_UPPER_INDICES) {
+                val landmark = poseLandmarks[poseIdx]
+                keypoints[idx++] = landmark.x()
+                keypoints[idx++] = landmark.y()
+            }
+        } else {
+            idx += 50
+        }
+
+        // Hand landmarks
+        val handLandmarks = latestHandResult?.landmarks() ?: emptyList()
+        val handedness = latestHandResult?.handednesses() ?: emptyList()
+        
+        var leftHandLandmarks: List<com.google.mediapipe.tasks.components.containers.NormalizedLandmark>? = null
+        var rightHandLandmarks: List<com.google.mediapipe.tasks.components.containers.NormalizedLandmark>? = null
+
+        for (i in handLandmarks.indices) {
+            val hand = handLandmarks[i]
+            val handLabel = handedness.getOrNull(i)?.firstOrNull()?.categoryName()
+            when (handLabel) {
+                "Left" -> leftHandLandmarks = hand
+                "Right" -> rightHandLandmarks = hand
+            }
+        }
+
+        // Left hand (21 points × 2 = 42 values)
+        if (leftHandLandmarks != null && leftHandLandmarks.size >= 21) {
+            for (i in 0 until 21) {
+                keypoints[idx++] = leftHandLandmarks[i].x()
+                keypoints[idx++] = leftHandLandmarks[i].y()
+            }
+        } else {
+            idx += 42
+        }
+
+        // Right hand (21 points × 2 = 42 values)
+        if (rightHandLandmarks != null && rightHandLandmarks.size >= 21) {
+            for (i in 0 until 21) {
+                keypoints[idx++] = rightHandLandmarks[i].x()
+                keypoints[idx++] = rightHandLandmarks[i].y()
+            }
+        } else {
+            idx += 42
+        }
+
+        // Face landmarks (11 points × 2 = 22 values) - placeholder
+        idx += 22
+
+        return keypoints
+    }
+
+    fun detectOcclusion(keypoints: FloatArray): Boolean {
+        if (keypoints.size < 156) return false
+        
+        val criticalIndices = listOf(11, 12, 13, 14, 15, 16, 25, 26, 46, 47)
+        
+        var occludedCount = 0
+        for (i in criticalIndices) {
+            if (i * 2 + 1 >= keypoints.size) continue
+            val x = keypoints[i * 2]
+            val y = keypoints[i * 2 + 1]
+            if (x == 0f && y == 0f) occludedCount++
+        }
+        
+        return occludedCount > 5
+    }
+
     fun release() {
         handLandmarker?.close()
         poseLandmarker?.close()
-        Log.i(TAG, "MediaPipe resources released")
+        handLandmarker = null
+        poseLandmarker = null
+        Log.i(TAG, "MediaPipe released")
     }
 
-    /**
-     * Detect if hand is occluding face (simple bounding box overlap check).
-     * 
-     * @param keypoints FloatArray[156] containing normalized coordinates
-     * @return true if occlusion detected, false otherwise
-     */
-    fun detectOcclusion(keypoints: FloatArray): Boolean {
-        if (keypoints.size < 156) return false
-
-        // Face region: Use pose landmarks 0-10 (first 11 pose points)
-        val faceMinX = (0 until 11).mapNotNull { i ->
-            val x = keypoints[i * 2]
-            if (x > 0) x else null
-        }.minOrNull() ?: return false
-
-        val faceMaxX = (0 until 11).mapNotNull { i ->
-            val x = keypoints[i * 2]
-            if (x > 0) x else null
-        }.maxOrNull() ?: return false
-
-        val faceMinY = (0 until 11).mapNotNull { i ->
-            val y = keypoints[i * 2 + 1]
-            if (y > 0) y else null
-        }.minOrNull() ?: return false
-
-        val faceMaxY = (0 until 11).mapNotNull { i ->
-            val y = keypoints[i * 2 + 1]
-            if (y > 0) y else null
-        }.maxOrNull() ?: return false
-
-        // Check left hand (indices 50-91, representing 21 points)
-        val leftHandOccludes = checkHandOcclusion(
-            keypoints, 50, faceMinX, faceMaxX, faceMinY, faceMaxY
-        )
-
-        // Check right hand (indices 92-133, representing 21 points)
-        val rightHandOccludes = checkHandOcclusion(
-            keypoints, 92, faceMinX, faceMaxX, faceMinY, faceMaxY
-        )
-
-        return leftHandOccludes || rightHandOccludes
-    }
-
-    /**
-     * Check if a specific hand is occluding the face bounding box.
-     */
-    private fun checkHandOcclusion(
-        keypoints: FloatArray,
-        startIdx: Int,
-        faceMinX: Float,
-        faceMaxX: Float,
-        faceMinY: Float,
-        faceMaxY: Float
-    ): Boolean {
-        // Get hand bounding box
-        val handMinX = (0 until 21).mapNotNull { i ->
-            val x = keypoints[startIdx + i * 2]
-            if (x > 0) x else null
-        }.minOrNull() ?: return false
-
-        val handMaxX = (0 until 21).mapNotNull { i ->
-            val x = keypoints[startIdx + i * 2]
-            if (x > 0) x else null
-        }.maxOrNull() ?: return false
-
-        val handMinY = (0 until 21).mapNotNull { i ->
-            val y = keypoints[startIdx + i * 2 + 1]
-            if (y > 0) y else null
-        }.minOrNull() ?: return false
-
-        val handMaxY = (0 until 21).mapNotNull { i ->
-            val y = keypoints[startIdx + i * 2 + 1]
-            if (y > 0) y else null
-        }.maxOrNull() ?: return false
-
-        // Check bounding box overlap
-        val xOverlap = handMinX < faceMaxX && handMaxX > faceMinX
-        val yOverlap = handMinY < faceMaxY && handMaxY > faceMinY
-
-        return xOverlap && yOverlap
-    }
-
-    /**
-     * Get extraction statistics.
-     * @return Pair(successCount, failureCount)
-     */
-    fun getStats(): Pair<Int, Int> {
-        return Pair(successCount, failureCount)
-    }
+    fun getStats(): Pair<Int, Int> = Pair(successCount, failureCount)
 }
-

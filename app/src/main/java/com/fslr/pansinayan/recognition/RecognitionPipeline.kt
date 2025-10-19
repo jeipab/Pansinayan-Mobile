@@ -1,8 +1,8 @@
 package com.fslr.pansinayan.recognition
 
 import android.content.Context
-import android.graphics.Bitmap
 import android.util.Log
+import androidx.camera.core.ImageProxy
 import androidx.lifecycle.LifecycleOwner
 import com.fslr.pansinayan.camera.CameraManager
 import com.fslr.pansinayan.inference.SequenceBufferManager
@@ -39,8 +39,8 @@ class RecognitionPipeline(
     private val lifecycleOwner: LifecycleOwner,
     private val previewView: androidx.camera.view.PreviewView,
     private val onSignRecognized: (RecognizedSign) -> Unit,
-    private val onFrameUpdate: ((keypoints: FloatArray?, isOccluded: Boolean) -> Unit)? = null
-) {
+    private val onFrameUpdate: ((keypoints: FloatArray?, imageWidth: Int, imageHeight: Int, isOccluded: Boolean) -> Unit)? = null
+) : MediaPipeProcessor.KeypointListener {
     companion object {
         private const val TAG = "RecognitionPipeline"
         private const val INFERENCE_INTERVAL = 10  // Run inference every N frames
@@ -72,7 +72,7 @@ class RecognitionPipeline(
             Log.i(TAG, "Initializing recognition pipeline...")
 
             cameraManager = CameraManager(context, lifecycleOwner, previewView, targetFps = 15)
-            mediaPipeProcessor = MediaPipeProcessor(context)
+            mediaPipeProcessor = MediaPipeProcessor(context, this)
             bufferManager = SequenceBufferManager(windowSize = 90, maxGap = 5)
             modelRunner = TFLiteModelRunner(context, modelPath = "sign_transformer_quant.tflite")
             temporalRecognizer = TemporalRecognizer(
@@ -109,45 +109,35 @@ class RecognitionPipeline(
         }
     }
 
-    /**
-     * Process a single frame through the pipeline.
-     */
-    private fun processFrame(frame: Bitmap) {
+    private fun processFrame(imageProxy: ImageProxy) {
+        mediaPipeProcessor.detectLiveStream(imageProxy, isFrontCamera = true)
+    }
+
+    override fun onKeypointsExtracted(keypoints: FloatArray?, imageWidth: Int, imageHeight: Int) {
         pipelineScope.launch {
             try {
                 val currentFrame = frameCounter.incrementAndGet()
-
-                // Step 1: Extract keypoints from frame
-                val keypoints = mediaPipeProcessor.extractKeypoints(frame)
-
-                if (keypoints == null) {
-                    Log.w(TAG, "Failed to extract keypoints from frame $currentFrame")
-                } else {
-                    Log.d(TAG, "Successfully extracted keypoints from frame $currentFrame")
-                }
-
-                // Step 2: Detect occlusion
                 val isOccluded = keypoints?.let { mediaPipeProcessor.detectOcclusion(it) } ?: false
                 
-                // Step 3: Notify frame update callback (for UI updates like skeleton overlay)
                 onFrameUpdate?.let { callback ->
                     withContext(Dispatchers.Main) {
-                        callback(keypoints, isOccluded)
+                        callback(keypoints, imageWidth, imageHeight, isOccluded)
                     }
                 }
                 
-                // Step 4: Add to sliding window buffer
                 bufferManager.addFrame(keypoints)
 
-                // Step 5: Run inference every N frames (not every frame for performance)
                 if (currentFrame % INFERENCE_INTERVAL == 0) {
                     runInferenceIfReady()
                 }
-
             } catch (e: Exception) {
                 Log.e(TAG, "Frame processing failed", e)
             }
         }
+    }
+
+    override fun onError(error: String) {
+        Log.e(TAG, "MediaPipe error: $error")
     }
 
     /**

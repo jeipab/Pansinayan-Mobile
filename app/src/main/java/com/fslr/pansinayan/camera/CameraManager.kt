@@ -1,18 +1,12 @@
 package com.fslr.pansinayan.camera
 
 import android.content.Context
-import android.graphics.Bitmap
-import android.graphics.BitmapFactory
-import android.graphics.ImageFormat
-import android.graphics.Rect
-import android.graphics.YuvImage
+import android.util.Log
 import androidx.camera.core.*
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.LifecycleOwner
-import android.util.Log
-import java.io.ByteArrayOutputStream
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 
@@ -23,13 +17,13 @@ import java.util.concurrent.Executors
  * - Initialize and manage CameraX lifecycle
  * - Provide live camera preview
  * - Sample frames at target FPS for processing
- * - Convert camera frames to Bitmap format
- * - Deliver frames to callback for further processing
+ * - Deliver ImageProxy frames directly to MediaPipe (no conversion needed)
  * 
  * Usage:
  *   val cameraManager = CameraManager(context, lifecycleOwner, previewView, targetFps = 15)
- *   cameraManager.startCamera { bitmap ->
- *       // Process bitmap (extract keypoints, run inference, etc.)
+ *   cameraManager.startCamera { imageProxy ->
+ *       // Process imageProxy with MediaPipe
+ *       // Remember to close() imageProxy when done!
  *   }
  */
 class CameraManager(
@@ -45,7 +39,7 @@ class CameraManager(
     private var cameraProvider: ProcessCameraProvider? = null
     private var cameraExecutor: ExecutorService = Executors.newSingleThreadExecutor()
     private var imageAnalyzer: ImageAnalysis? = null
-    private var frameCallback: ((Bitmap) -> Unit)? = null
+    private var frameCallback: ((ImageProxy) -> Unit)? = null
     
     // Frame rate control
     private var lastProcessedTime = 0L
@@ -58,9 +52,9 @@ class CameraManager(
     /**
      * Start camera with preview and frame analysis.
      * 
-     * @param onFrameReady Callback invoked with each sampled frame
+     * @param onFrameReady Callback invoked with each sampled frame (ImageProxy)
      */
-    fun startCamera(onFrameReady: (Bitmap) -> Unit) {
+    fun startCamera(onFrameReady: (ImageProxy) -> Unit) {
         frameCallback = onFrameReady
         
         val cameraProviderFuture = ProcessCameraProvider.getInstance(context)
@@ -90,8 +84,9 @@ class CameraManager(
 
         // Image analysis use case - processes frames for recognition
         imageAnalyzer = ImageAnalysis.Builder()
-            .setTargetResolution(android.util.Size(640, 480))
+            .setTargetAspectRatio(AspectRatio.RATIO_4_3)
             .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
+            .setOutputImageFormat(ImageAnalysis.OUTPUT_IMAGE_FORMAT_RGBA_8888)
             .build()
             .also {
                 it.setAnalyzer(cameraExecutor, FrameAnalyzer())
@@ -129,11 +124,8 @@ class CameraManager(
             // Frame rate throttling - only process frames at target FPS
             if (currentTime - lastProcessedTime >= frameIntervalMs) {
                 try {
-                    // Convert ImageProxy to Bitmap
-                    val bitmap = imageProxyToBitmap(image)
-
-                    // Invoke callback with bitmap
-                    frameCallback?.invoke(bitmap)
+                    // Pass ImageProxy directly to MediaPipe (no conversion needed!)
+                    frameCallback?.invoke(image)
 
                     processedFrames++
                     lastProcessedTime = currentTime
@@ -145,9 +137,9 @@ class CameraManager(
 
                 } catch (e: Exception) {
                     Log.e(TAG, "Frame analysis failed", e)
-                } finally {
                     image.close()
                 }
+                // Note: ImageProxy will be closed by MediaPipeProcessor after processing
             } else {
                 // Skip this frame to maintain target FPS
                 image.close()
@@ -155,35 +147,6 @@ class CameraManager(
         }
     }
 
-    /**
-     * Convert ImageProxy (YUV format) to Bitmap (RGB format).
-     * 
-     * Note: This is a simplified conversion. For better performance,
-     * consider using RenderScript or native code for YUV→RGB conversion.
-     */
-    private fun imageProxyToBitmap(image: ImageProxy): Bitmap {
-        val yBuffer = image.planes[0].buffer
-        val uBuffer = image.planes[1].buffer
-        val vBuffer = image.planes[2].buffer
-
-        val ySize = yBuffer.remaining()
-        val uSize = uBuffer.remaining()
-        val vSize = vBuffer.remaining()
-
-        val nv21 = ByteArray(ySize + uSize + vSize)
-
-        // U and V are swapped for NV21 format
-        yBuffer.get(nv21, 0, ySize)
-        vBuffer.get(nv21, ySize, vSize)
-        uBuffer.get(nv21, ySize + vSize, uSize)
-
-        val yuvImage = YuvImage(nv21, ImageFormat.NV21, image.width, image.height, null)
-        val out = ByteArrayOutputStream()
-        yuvImage.compressToJpeg(Rect(0, 0, image.width, image.height), 100, out)
-        val imageBytes = out.toByteArray()
-
-        return BitmapFactory.decodeByteArray(imageBytes, 0, imageBytes.size)
-    }
 
     /**
      * Stop camera and release resources.

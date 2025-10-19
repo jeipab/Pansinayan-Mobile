@@ -11,13 +11,13 @@ This project provides the complete, production-ready Android scaffolding code an
 
 ## 🚀 Features
 
-* **Live Recognition:** Uses CameraX for a high-performance, real-time camera feed.
-* **Dual-Model Support:** Allows real-time switching between a high-accuracy Transformer model and a lightweight GRU model.
-* **Advanced Keypoint Extraction:** Employs MediaPipe for robust extraction of 78 keypoints (pose, left hand, right hand, and face), totaling 156 data points.
-* **Skeleton Visualization:** Toggleable skeleton overlay to visualize the keypoints MediaPipe is detecting.
-* **Occlusion Detection:** UI indicator shows when the user's hand blocks their face (which can affect accuracy).
-* **Persistent History:** All recognitions are saved to a local Room database for review.
-* **CSV Export:** Users can export their recognition history as a CSV file for analysis.
+- **Live Recognition:** Uses CameraX for a high-performance, real-time camera feed.
+- **Dual-Model Support:** Allows real-time switching between a high-accuracy Transformer model and a lightweight GRU model.
+- **Advanced Keypoint Extraction:** Employs MediaPipe for robust extraction of 78 keypoints (pose, left hand, right hand, and face), totaling 156 data points.
+- **Skeleton Visualization:** Real-time skeleton overlay showing pose (green) and hand keypoints (yellow) for debugging and verification. Enabled by default with debug mode available via long-press.
+- **Occlusion Detection:** UI indicator shows when the user's hand blocks their face (which can affect accuracy).
+- **Persistent History:** All recognitions are saved to a local Room database for review.
+- **CSV Export:** Users can export their recognition history as a CSV file for analysis.
 
 ---
 
@@ -42,10 +42,10 @@ Follow these steps to build and run the project on your local machine.
 
 ### Prerequisites
 
-* Android Studio (latest version)
-* Android device or Emulator (API 24+)
-* Python 3.8+
-* Required Python libraries: `torch`, `onnx`, `onnx-tf`, `tensorflow`, `numpy`, `pandas`
+- Android Studio (latest version)
+- Android device or Emulator (API 24+)
+- Python 3.8+
+- Required Python libraries: `torch`, `onnx`, `onnx-tf`, `tensorflow`, `numpy`, `pandas`
 
 ---
 
@@ -80,7 +80,8 @@ label_mapping.json
 1. Open **Android Studio**.
 2. Select **File > New > Project from Version Control**, then enter your repository URL.
 
-   * Alternatively, download the ZIP, extract it, and open this folder directly in Android Studio.
+   - Alternatively, download the ZIP, extract it, and open this folder directly in Android Studio.
+
 3. In the project panel, right-click `app/src/main/` → **New > Folder > Assets Folder** → **Finish**.
 
 ---
@@ -95,9 +96,9 @@ app/src/main/assets/
 
 Files:
 
-* `sign_transformer_quant.tflite`
-* `sign_mediapipe_gru_quant.tflite`
-* `label_mapping.json`
+- `sign_transformer_quant.tflite`
+- `sign_mediapipe_gru_quant.tflite`
+- `label_mapping.json`
 
 ---
 
@@ -107,8 +108,8 @@ The app also requires MediaPipe’s base models for pose and hand tracking.
 
 Download the following files and place them in `app/src/main/assets/`:
 
-* `hand_landmarker.task`
-* `pose_landmarker_full.task`
+- `hand_landmarker.task`
+- `pose_landmarker_full.task`
 
 Your `assets/` folder should now contain **five files total**.
 
@@ -118,8 +119,23 @@ Your `assets/` folder should now contain **five files total**.
 
 1. Wait for Android Studio to sync Gradle. If not, click **Sync Project with Gradle Files** (small elephant icon).
 2. Connect your Android device or start an emulator.
-3. Click the **Run ‘app’** button (green play icon).
+3. Click the **Run 'app'** button (green play icon).
 4. Grant camera permission when prompted.
+
+---
+
+## 🎨 Using the Skeleton Overlay
+
+The skeleton overlay helps you visualize keypoints in real-time:
+
+1. **Toggle Visibility**: Use the "Show Skeleton" switch (bottom-left) to show/hide keypoints
+2. **Default State**: The overlay is enabled by default for easier debugging
+3. **Debug Mode**: Long-press the skeleton toggle to enable debug information overlay
+4. **Color Coding**:
+   - **Green**: Body pose keypoints (face, shoulders, arms, torso)
+   - **Yellow**: Hand keypoints (21 points per hand)
+
+For detailed information, see [SKELETON_OVERLAY_GUIDE.md](SKELETON_OVERLAY_GUIDE.md).
 
 ---
 

@@ -113,10 +113,21 @@ class MainActivity : AppCompatActivity() {
      * Set up UI component listeners.
      */
     private fun setupUIListeners() {
-        // Skeleton toggle
+        // Skeleton toggle - enable by default
+        skeletonToggle.isChecked = true
+        overlayView.visibility = View.VISIBLE
+        
         skeletonToggle.setOnCheckedChangeListener { _, isChecked ->
             overlayView.visibility = if (isChecked) View.VISIBLE else View.GONE
             Log.i(TAG, "Skeleton overlay: ${if (isChecked) "visible" else "hidden"}")
+        }
+        
+        // Long press on skeleton toggle to enable debug mode
+        skeletonToggle.setOnLongClickListener {
+            overlayView.setDebugMode(true)
+            Toast.makeText(this, "Debug mode enabled", Toast.LENGTH_SHORT).show()
+            Log.i(TAG, "Debug mode enabled for overlay")
+            true
         }
 
         // Model selection
@@ -187,8 +198,8 @@ class MainActivity : AppCompatActivity() {
                 onSignRecognized = { recognizedSign ->
                     handleRecognizedSign(recognizedSign)
                 },
-                onFrameUpdate = { keypoints, isOccluded ->
-                    handleFrameUpdate(keypoints, isOccluded)
+                onFrameUpdate = { keypoints, imageWidth, imageHeight, isOccluded ->
+                    handleFrameUpdate(keypoints, imageWidth, imageHeight, isOccluded)
                 }
             )
 
@@ -208,16 +219,9 @@ class MainActivity : AppCompatActivity() {
      * Handle frame updates (keypoints and occlusion status).
      * Called on main thread.
      */
-    private fun handleFrameUpdate(keypoints: FloatArray?, isOccluded: Boolean) {
-        // Update skeleton overlay
-        if (skeletonToggle.isChecked) {
-            overlayView.setKeypoints(keypoints)
-        }
-
-        // Update occlusion indicator
-        occlusionIndicator.setBackgroundColor(
-            if (isOccluded) Color.RED else Color.GREEN
-        )
+    private fun handleFrameUpdate(keypoints: FloatArray?, imageWidth: Int, imageHeight: Int, isOccluded: Boolean) {
+        overlayView.setKeypoints(keypoints, imageWidth, imageHeight)
+        occlusionIndicator.setBackgroundColor(if (isOccluded) Color.RED else Color.GREEN)
     }
 
     /**
