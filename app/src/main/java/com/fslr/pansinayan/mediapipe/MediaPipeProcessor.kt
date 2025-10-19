@@ -104,6 +104,8 @@ class MediaPipeProcessor(
 
             val matrix = Matrix().apply {
                 postRotate(imageProxy.imageInfo.rotationDegrees.toFloat())
+                
+                // Flip image if using front camera (matches official MediaPipe examples)
                 if (isFrontCamera) {
                     postScale(-1f, 1f, imageProxy.width.toFloat(), imageProxy.height.toFloat())
                 }

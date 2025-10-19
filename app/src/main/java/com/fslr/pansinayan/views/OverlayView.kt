@@ -29,6 +29,7 @@ class OverlayView @JvmOverloads constructor(
     private var imageHeight = 1
     private var scaleFactor = 1f
     private var debugMode = false
+    private var isFrontCamera = true
     private var lastUpdateTime = 0L
     private var frameCount = 0
     
@@ -89,7 +90,8 @@ class OverlayView @JvmOverloads constructor(
         val currentTime = System.currentTimeMillis()
         if (currentTime - lastUpdateTime > 2000) {
             val validPoints = keypoints?.let { countValidPoints(it) } ?: 0
-            Log.d(TAG, "Overlay: $frameCount frames, $validPoints keypoints, scale: %.2f".format(scaleFactor))
+            Log.d(TAG, "Overlay: $frameCount frames, $validPoints keypoints")
+            Log.d(TAG, "Dimensions: overlay=${width}x${height}, image=${imageWidth}x${imageHeight}, scale=%.2f".format(scaleFactor))
             lastUpdateTime = currentTime
             frameCount = 0
         }
