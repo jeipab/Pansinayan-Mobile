@@ -91,6 +91,8 @@
         android:text="Show Skeleton"
         android:textColor="@android:color/white"
         android:textStyle="bold"
+        app:thumbTint="@color/primary_blue"
+        app:trackTint="@color/primary_blue_dark"
         app:layout_constraintBottom_toTopOf="@id/transcript_card"
         app:layout_constraintStart_toStartOf="parent" />
 
@@ -118,7 +120,8 @@
             android:textSize="12sp"
             android:textColor="@android:color/white"
             android:paddingEnd="8dp"
-            android:checked="true" />
+            android:checked="true"
+            android:buttonTint="@color/primary_blue" />
 
         <RadioButton
             android:id="@+id/radio_gru"
@@ -127,7 +130,8 @@
             android:paddingStart="8dp"
             android:text="GRU"
             android:textColor="@android:color/white"
-            android:textSize="12sp" />
+            android:textSize="12sp"
+            android:buttonTint="@color/primary_blue" />
     </RadioGroup>
 
     <!-- Record Button (FAB - Bottom Right) -->
@@ -137,6 +141,8 @@
         android:layout_height="wrap_content"
         android:layout_margin="16dp"
         android:src="@drawable/ic_record"
+        app:backgroundTint="@color/primary_blue"
+        app:tint="@android:color/white"
         app:layout_constraintBottom_toTopOf="@id/transcript_card"
         app:layout_constraintEnd_toEndOf="parent" />
 
@@ -148,9 +154,25 @@
         android:layout_marginBottom="15dp"
         android:contentDescription="Switch Camera"
         android:src="@android:drawable/ic_menu_camera"
+        app:backgroundTint="@color/primary_blue"
+        app:tint="@android:color/white"
         app:layout_constraintBottom_toTopOf="@id/fab_record"
         app:layout_constraintEnd_toEndOf="@id/fab_record"
         app:layout_constraintStart_toStartOf="@id/fab_record" />
+
+    <!-- Back Button (FAB - Bottom Right, above switch camera button) -->
+    <com.google.android.material.floatingactionbutton.FloatingActionButton
+        android:id="@+id/fab_back"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginBottom="15dp"
+        android:contentDescription="Back"
+        android:src="@android:drawable/ic_menu_revert"
+        app:backgroundTint="@color/primary_blue"
+        app:tint="@android:color/white"
+        app:layout_constraintBottom_toTopOf="@id/fab_switch_camera"
+        app:layout_constraintEnd_toEndOf="@id/fab_switch_camera"
+        app:layout_constraintStart_toStartOf="@id/fab_switch_camera" />
 
     <!-- Transcript History (Bottom) -->
     <androidx.cardview.widget.CardView

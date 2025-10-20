@@ -62,6 +62,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var skeletonToggle: SwitchMaterial
     private lateinit var fabRecord: FloatingActionButton
     private lateinit var fabSwitchCamera: FloatingActionButton
+    private lateinit var fabBack: FloatingActionButton
     private lateinit var radioModelSelection: RadioGroup
 
     // Recognition pipeline
@@ -95,6 +96,7 @@ class MainActivity : AppCompatActivity() {
         skeletonToggle = findViewById(R.id.toggle_skeleton)
         fabRecord = findViewById(R.id.fab_record)
         fabSwitchCamera = findViewById(R.id.fab_switch_camera)
+        fabBack = findViewById(R.id.fab_back)
         radioModelSelection = findViewById(R.id.radio_model_selection)
 
         // Initialize database
@@ -154,6 +156,11 @@ class MainActivity : AppCompatActivity() {
         // Camera switch button
         fabSwitchCamera.setOnClickListener {
             switchCamera()
+        }
+
+        // Back button
+        fabBack.setOnClickListener {
+            onBackPressed()
         }
     }
 
