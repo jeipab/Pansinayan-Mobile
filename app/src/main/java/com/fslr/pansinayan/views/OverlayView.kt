@@ -297,22 +297,24 @@ class OverlayView @JvmOverloads constructor(
      * @param startIdx Starting index in the keypoints array (134 for face)
      */
     private fun drawFaceLandmarks(canvas: Canvas, kp: FloatArray, startIdx: Int) {
-        // Lip connections: 3 upper + 3 lower + 2 corners (8 points)
-        // 0: Left corner (61), 1: Upper left-outer (78), 2: Upper center (13),
-        // 3: Upper right-outer (308), 4: Right corner (291), 5: Lower right-center (375),
-        // 6: Lower center (14), 7: Lower left-center (146)
+        // Lip connections: User specified landmarks (8 points)
+        // 0: Upper lip left (81), 1: Upper center (13), 2: Upper lip right (311),
+        // 3: Left corner (61), 4: Lower lip left (178), 5: Lower center (14),
+        // 6: Lower lip right (402), 7: Right corner (291)
         val lipConnections = listOf(
-            // Upper lip arc (left corner → upper curve → center → upper curve → right corner)
-            Pair(0, 1),  // Left corner → upper left-outer
-            Pair(1, 2),  // Upper left-outer → upper center
-            Pair(2, 3),  // Upper center → upper right-outer
-            Pair(3, 4),  // Upper right-outer → right corner
+            // Upper lip arc (left → center → right)
+            Pair(0, 1),  // Upper lip left → upper center
+            Pair(1, 2),  // Upper center → upper lip right
             
-            // Lower lip arc (right corner → lower curve → center → lower curve → left corner)
-            Pair(4, 5),  // Right corner → lower right-center
-            Pair(5, 6),  // Lower right-center → lower center
-            Pair(6, 7),  // Lower center → lower left-center
-            Pair(7, 0)   // Lower left-center → left corner (close loop)
+            // Lower lip arc (left → center → right)
+            Pair(4, 5),  // Lower lip left → lower center
+            Pair(5, 6),  // Lower center → lower lip right
+            
+            // Corner connections (arcs to corners)
+            Pair(0, 3),  // Upper lip left → left corner
+            Pair(3, 4),  // Left corner → lower lip left
+            Pair(2, 7),  // Upper lip right → right corner
+            Pair(7, 6)   // Right corner → lower lip right
         )
         
         // Draw lip connections (YELLOW)

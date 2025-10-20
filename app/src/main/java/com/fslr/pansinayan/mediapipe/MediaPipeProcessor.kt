@@ -35,17 +35,18 @@ class MediaPipeProcessor(
         // These capture the most critical facial features for non-manual markers
         // Using actual MediaPipe Face Mesh 468-point model indices
         private val MINIMAL_FACE_INDICES = listOf(
-            // Lips (8 points) - 3 upper + 3 lower + 2 corners for natural mouth shape
-            // Upper lip: left corner → left curve → center → right curve → right corner
-            // Lower lip: right corner → right curve → center → left curve → left corner
-            61,   // 0: Left corner
-            78,   // 1: Upper lip left-outer
-            13,   // 2: Upper lip center (cupid's bow)
-            308,  // 3: Upper lip right-outer
-            291,  // 4: Right corner
-            375,  // 5: Lower lip right-center
-            14,   // 6: Lower lip center
-            146,  // 7: Lower lip left-center
+            // Lips (8 points) - User specified landmarks for proper arc distribution
+            // Upper lip: left → center → right
+            // Lower lip: left → center → right
+            // Corners: clean connection points
+            81,   // 0: Upper lip left
+            13,   // 1: Upper lip center (cupid's bow)
+            311,  // 2: Upper lip right
+            61,   // 3: Left corner
+            178,  // 4: Lower lip left
+            14,   // 5: Lower lip center
+            402,  // 6: Lower lip right
+            291,  // 7: Right corner
             
             // Eyes (6 points) - For eye aperture and gaze
             33,   // 8: Left eye left corner
