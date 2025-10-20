@@ -117,7 +117,8 @@ class RecognitionPipeline(
         pipelineScope.launch {
             try {
                 val currentFrame = frameCounter.incrementAndGet()
-                val isOccluded = keypoints?.let { mediaPipeProcessor.detectOcclusion(it) } ?: false
+                // Use new hand-face occlusion detection (aligned with preprocessing pipeline)
+                val isOccluded = keypoints?.let { mediaPipeProcessor.detectHandFaceOcclusion(it) } ?: false
                 
                 onFrameUpdate?.let { callback ->
                     withContext(Dispatchers.Main) {

@@ -3,6 +3,7 @@ package com.fslr.pansinayan.mediapipe
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Matrix
+import android.graphics.PointF
 import android.os.SystemClock
 import android.util.Log
 import androidx.camera.core.ImageProxy
@@ -16,6 +17,7 @@ import com.google.mediapipe.tasks.vision.handlandmarker.HandLandmarker
 import com.google.mediapipe.tasks.vision.handlandmarker.HandLandmarkerResult
 import com.google.mediapipe.tasks.vision.poselandmarker.PoseLandmarker
 import com.google.mediapipe.tasks.vision.poselandmarker.PoseLandmarkerResult
+import kotlin.math.sqrt
 
 class MediaPipeProcessor(
     private val context: Context,
@@ -69,7 +71,35 @@ class MediaPipeProcessor(
             4     // 21: Nose bridge (between eyes)
         )
         // Total: 22 face landmarks × 2 = 44 values
+        
+        // Hand-face occlusion detection constants (aligned with preprocessing pipeline)
+        private const val PROXIMITY_MULTIPLIER = 1.5f
+        private const val MIN_FINGERTIPS_INSIDE = 1
+        private const val MIN_FACE_POINTS = 3
+        private const val TEMPORAL_WINDOW_SIZE = 5
+        private const val TEMPORAL_THRESHOLD = 3
+        
+        // Hand keypoint structure (relative indices within hand)
+        private val MCP_JOINTS = listOf(5, 9, 13, 17)  // For palm center calculation
+        private val FINGERTIP_INDICES = listOf(4, 8, 12, 16, 20)  // All 5 fingertips
     }
+    
+    /**
+     * Hand features extracted for occlusion detection.
+     */
+    data class HandFeatures(
+        val palmCenter: PointF?,
+        val fingertips: List<PointF>
+    )
+    
+    /**
+     * Face features extracted for occlusion detection.
+     */
+    data class FaceFeatures(
+        val center: PointF,
+        val radiusX: Float,
+        val radiusY: Float
+    )
 
     interface KeypointListener {
         fun onKeypointsExtracted(keypoints: FloatArray?, imageWidth: Int, imageHeight: Int)
@@ -89,6 +119,9 @@ class MediaPipeProcessor(
     private var successCount = 0
     private var failureCount = 0
     private var frameCount = 0
+    
+    // Temporal filtering buffer for hand-face occlusion detection
+    private val occlusionHistory = ArrayDeque<Boolean>(TEMPORAL_WINDOW_SIZE)
 
     init {
         setupLandmarkers()
@@ -312,6 +345,153 @@ class MediaPipeProcessor(
         return keypoints
     }
 
+    /**
+     * Detect hand-face occlusion (aligned with preprocessing pipeline).
+     * 
+     * This function detects when hands are covering the face, which affects
+     * sign language recognition quality. Uses spatial proximity detection
+     * between hand fingertips and face landmarks.
+     * 
+     * @param keypoints FloatArray of 178 values (89 keypoints × 2)
+     * @return true if hands are covering face, false otherwise
+     */
+    fun detectHandFaceOcclusion(keypoints: FloatArray): Boolean {
+        if (keypoints.size < 178) return false
+        
+        // 1. Extract hand features
+        val leftHand = extractHandFeatures(keypoints, handStart = 25, handLen = 21)
+        val rightHand = extractHandFeatures(keypoints, handStart = 46, handLen = 21)
+        
+        // 2. Extract face features
+        val face = extractFaceFeatures(keypoints, faceStart = 67, faceLen = 22) ?: return false
+        
+        // 3. Check if fingertips are inside/near face region
+        val occlusionDetected = checkHandFaceProximity(leftHand, face) || 
+                                checkHandFaceProximity(rightHand, face)
+        
+        // 4. Apply temporal filtering (need consistent detection across frames)
+        return applyTemporalFilter(occlusionDetected)
+    }
+    
+    /**
+     * Extract hand features (palm center and fingertips) from keypoints.
+     */
+    private fun extractHandFeatures(keypoints: FloatArray, handStart: Int, handLen: Int): HandFeatures {
+        // Extract MCP joints for palm center calculation
+        val mcpPoints = mutableListOf<PointF>()
+        
+        for (relIdx in MCP_JOINTS) {
+            val absIdx = handStart + relIdx
+            if (absIdx < 89) {
+                val x = keypoints[absIdx * 2]
+                val y = keypoints[absIdx * 2 + 1]
+                if (x != 0f || y != 0f) {
+                    mcpPoints.add(PointF(x, y))
+                }
+            }
+        }
+        
+        // Calculate palm center (average of MCP joints)
+        val palmCenter = if (mcpPoints.size >= 2) {
+            val avgX = mcpPoints.map { it.x }.average().toFloat()
+            val avgY = mcpPoints.map { it.y }.average().toFloat()
+            PointF(avgX, avgY)
+        } else null
+        
+        // Extract fingertips
+        val fingertips = mutableListOf<PointF>()
+        
+        for (relIdx in FINGERTIP_INDICES) {
+            val absIdx = handStart + relIdx
+            if (absIdx < 89) {
+                val x = keypoints[absIdx * 2]
+                val y = keypoints[absIdx * 2 + 1]
+                if (x != 0f || y != 0f) {
+                    fingertips.add(PointF(x, y))
+                }
+            }
+        }
+        
+        return HandFeatures(palmCenter, fingertips)
+    }
+    
+    /**
+     * Extract face features (center and bounding ellipse) from keypoints.
+     */
+    private fun extractFaceFeatures(keypoints: FloatArray, faceStart: Int, faceLen: Int): FaceFeatures? {
+        val facePoints = mutableListOf<PointF>()
+        
+        for (i in 0 until faceLen) {
+            val absIdx = faceStart + i
+            if (absIdx < 89) {
+                val x = keypoints[absIdx * 2]
+                val y = keypoints[absIdx * 2 + 1]
+                if (x != 0f || y != 0f) {
+                    facePoints.add(PointF(x, y))
+                }
+            }
+        }
+        
+        // Need at least MIN_FACE_POINTS landmarks to define face region
+        if (facePoints.size < MIN_FACE_POINTS) return null
+        
+        // Calculate face center
+        val centerX = facePoints.map { it.x }.average().toFloat()
+        val centerY = facePoints.map { it.y }.average().toFloat()
+        
+        // Calculate ellipse radii (using standard deviation)
+        val radiusX = facePoints.map { kotlin.math.abs(it.x - centerX) }.average().toFloat()
+        val radiusY = facePoints.map { kotlin.math.abs(it.y - centerY) }.average().toFloat()
+        
+        return FaceFeatures(PointF(centerX, centerY), radiusX, radiusY)
+    }
+    
+    /**
+     * Check if hand fingertips are within face proximity threshold.
+     */
+    private fun checkHandFaceProximity(hand: HandFeatures, face: FaceFeatures): Boolean {
+        var fingertipsInside = 0
+        
+        for (tip in hand.fingertips) {
+            // Calculate normalized distance from face ellipse center
+            val dx = (tip.x - face.center.x) / face.radiusX
+            val dy = (tip.y - face.center.y) / face.radiusY
+            val distance = sqrt(dx * dx + dy * dy)
+            
+            // Check if within proximity threshold
+            if (distance < PROXIMITY_MULTIPLIER) {
+                fingertipsInside++
+            }
+        }
+        
+        // Occlusion detected if at least MIN_FINGERTIPS_INSIDE are near face
+        return fingertipsInside >= MIN_FINGERTIPS_INSIDE
+    }
+    
+    /**
+     * Apply temporal filtering to reduce flickering false positives.
+     * Requires TEMPORAL_THRESHOLD out of TEMPORAL_WINDOW_SIZE frames to confirm.
+     */
+    private fun applyTemporalFilter(currentDetection: Boolean): Boolean {
+        occlusionHistory.addLast(currentDetection)
+        if (occlusionHistory.size > TEMPORAL_WINDOW_SIZE) {
+            occlusionHistory.removeFirst()
+        }
+        
+        // Need full window for reliable detection
+        if (occlusionHistory.size < TEMPORAL_WINDOW_SIZE) return false
+        
+        // Count detections in window
+        val detectionCount = occlusionHistory.count { it }
+        return detectionCount >= TEMPORAL_THRESHOLD
+    }
+    
+    /**
+     * Legacy occlusion detection (deprecated - detects missing body parts, not hand-face occlusion).
+     * 
+     * @deprecated Use detectHandFaceOcclusion() instead for sign language occlusion detection.
+     */
+    @Deprecated("Use detectHandFaceOcclusion() - this detects missing keypoints, not actual occlusion")
     fun detectOcclusion(keypoints: FloatArray): Boolean {
         if (keypoints.size < 178) return false
         
