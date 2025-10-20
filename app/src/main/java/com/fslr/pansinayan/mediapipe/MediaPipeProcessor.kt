@@ -35,15 +35,16 @@ class MediaPipeProcessor(
         // These capture the most critical facial features for non-manual markers
         // Using actual MediaPipe Face Mesh 468-point model indices
         private val MINIMAL_FACE_INDICES = listOf(
-            // Lips (8 points) - Outer lip contour for mouth shapes in sign language
-            // Follows natural mouth anatomy: upper lip left→right, lower lip right→left
-            61,   // 0: Left mouth corner
-            185,  // 1: Upper lip left-outer
-            40,   // 2: Upper lip left-center
-            39,   // 3: Upper lip right-center
-            291,  // 4: Right mouth corner
-            321,  // 5: Lower lip right-center
-            17,   // 6: Lower lip bottom center
+            // Lips (8 points) - 3 upper + 3 lower + 2 corners for natural mouth shape
+            // Upper lip: left corner → left curve → center → right curve → right corner
+            // Lower lip: right corner → right curve → center → left curve → left corner
+            61,   // 0: Left corner
+            78,   // 1: Upper lip left-outer
+            13,   // 2: Upper lip center (cupid's bow)
+            308,  // 3: Upper lip right-outer
+            291,  // 4: Right corner
+            375,  // 5: Lower lip right-center
+            14,   // 6: Lower lip center
             146,  // 7: Lower lip left-center
             
             // Eyes (6 points) - For eye aperture and gaze

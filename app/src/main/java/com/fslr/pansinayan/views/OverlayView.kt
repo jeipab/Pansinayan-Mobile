@@ -297,21 +297,21 @@ class OverlayView @JvmOverloads constructor(
      * @param startIdx Starting index in the keypoints array (134 for face)
      */
     private fun drawFaceLandmarks(canvas: Canvas, kp: FloatArray, startIdx: Int) {
-        // Lip connections follow natural mouth contour (8 points)
-        // 0: Left corner (61), 1: Upper left-outer (185), 2: Upper left-center (40),
-        // 3: Upper right-center (39), 4: Right corner (291), 5: Lower right-center (321),
-        // 6: Lower bottom center (17), 7: Lower left-center (146)
+        // Lip connections: 3 upper + 3 lower + 2 corners (8 points)
+        // 0: Left corner (61), 1: Upper left-outer (78), 2: Upper center (13),
+        // 3: Upper right-outer (308), 4: Right corner (291), 5: Lower right-center (375),
+        // 6: Lower center (14), 7: Lower left-center (146)
         val lipConnections = listOf(
-            // Upper lip (left to right)
+            // Upper lip arc (left corner → upper curve → center → upper curve → right corner)
             Pair(0, 1),  // Left corner → upper left-outer
-            Pair(1, 2),  // Upper left-outer → upper left-center
-            Pair(2, 3),  // Upper left-center → upper right-center
-            Pair(3, 4),  // Upper right-center → right corner
+            Pair(1, 2),  // Upper left-outer → upper center
+            Pair(2, 3),  // Upper center → upper right-outer
+            Pair(3, 4),  // Upper right-outer → right corner
             
-            // Lower lip (right to left, completing the contour)
+            // Lower lip arc (right corner → lower curve → center → lower curve → left corner)
             Pair(4, 5),  // Right corner → lower right-center
-            Pair(5, 6),  // Lower right-center → lower bottom center
-            Pair(6, 7),  // Lower bottom center → lower left-center
+            Pair(5, 6),  // Lower right-center → lower center
+            Pair(6, 7),  // Lower center → lower left-center
             Pair(7, 0)   // Lower left-center → left corner (close loop)
         )
         
