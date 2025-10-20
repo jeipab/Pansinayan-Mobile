@@ -33,33 +33,49 @@ class OverlayView @JvmOverloads constructor(
     private var lastUpdateTime = 0L
     private var frameCount = 0
     
-    // Paint for drawing keypoints
+    // Paint for drawing body keypoints (RED)
     private val keypointPaint = Paint().apply {
-        color = Color.rgb(0, 255, 0)
+        color = Color.rgb(255, 0, 0)
         strokeWidth = 10f
         style = Paint.Style.FILL
         isAntiAlias = true
     }
     
-    // Paint for drawing skeleton connections
+    // Paint for drawing body skeleton connections (RED)
     private val linePaint = Paint().apply {
-        color = Color.rgb(0, 255, 0)
+        color = Color.rgb(255, 0, 0)
         strokeWidth = 6f
         style = Paint.Style.STROKE
         isAntiAlias = true
     }
     
-    // Paint for hands (different color)
-    private val handPaint = Paint().apply {
+    // Paint for face keypoints (YELLOW)
+    private val facePaint = Paint().apply {
         color = Color.rgb(255, 255, 0)
         strokeWidth = 10f
         style = Paint.Style.FILL
         isAntiAlias = true
     }
     
-    // Paint for hand connections
-    private val handLinePaint = Paint().apply {
+    // Paint for face connections (YELLOW)
+    private val faceLinePaint = Paint().apply {
         color = Color.rgb(255, 255, 0)
+        strokeWidth = 5f
+        style = Paint.Style.STROKE
+        isAntiAlias = true
+    }
+    
+    // Paint for hands (GREEN)
+    private val handPaint = Paint().apply {
+        color = Color.rgb(0, 255, 0)
+        strokeWidth = 10f
+        style = Paint.Style.FILL
+        isAntiAlias = true
+    }
+    
+    // Paint for hand connections (GREEN)
+    private val handLinePaint = Paint().apply {
+        color = Color.rgb(0, 255, 0)
         strokeWidth = 5f
         style = Paint.Style.STROKE
         isAntiAlias = true
@@ -146,25 +162,38 @@ class OverlayView @JvmOverloads constructor(
     
     /**
      * Draw debug information overlay.
+     * Positioned at bottom left, just above the skeleton toggle switch.
      */
     private fun drawDebugInfo(canvas: Canvas, message: String, keypointSize: Int) {
+        // Position at bottom left (just above skeleton toggle)
+        // Account for: stats card (~50dp), transcript card (~varies), skeleton toggle (~60dp), margins
+        val bottomMargin = 600f  // Space for stats, transcript, and skeleton toggle
+        val boxHeight = 90f
+        val boxTop = height - bottomMargin - boxHeight
+        val boxBottom = height - bottomMargin
+        val leftMargin = 48f  // Align with other components (16dp ≈ 48px)
+        
         // Draw semi-transparent background
-        canvas.drawRect(10f, 10f, 400f, 100f, debugBgPaint)
+        canvas.drawRect(leftMargin, boxTop, 520f, boxBottom, debugBgPaint)
         
         // Draw text
-        canvas.drawText(message, 20f, 40f, debugTextPaint)
-        canvas.drawText("Keypoint array size: $keypointSize", 20f, 70f, debugTextPaint)
+        canvas.drawText(message, leftMargin + 12f, boxTop + 35f, debugTextPaint)
+        canvas.drawText("Keypoint array size: $keypointSize", leftMargin + 12f, boxTop + 65f, debugTextPaint)
     }
 
     /**
      * Draw pose skeleton with connections.
      */
     private fun drawPoseSkeleton(canvas: Canvas, kp: FloatArray) {
-        // Define pose connections (simplified upper body)
-        val poseConnections = listOf(
+        // Define face connections (YELLOW)
+        val faceConnections = listOf(
             // Face outline
             Pair(0, 1), Pair(1, 2), Pair(2, 3), Pair(3, 7),
-            Pair(0, 4), Pair(4, 5), Pair(5, 6), Pair(6, 8),
+            Pair(0, 4), Pair(4, 5), Pair(5, 6), Pair(6, 8)
+        )
+        
+        // Define body connections (RED)
+        val bodyConnections = listOf(
             // Shoulders
             Pair(11, 12),
             // Left arm
@@ -175,8 +204,8 @@ class OverlayView @JvmOverloads constructor(
             Pair(11, 23), Pair(12, 24), Pair(23, 24)
         )
 
-        // Draw connections
-        for ((idx1, idx2) in poseConnections) {
+        // Draw face connections (YELLOW)
+        for ((idx1, idx2) in faceConnections) {
             if (idx1 * 2 + 1 >= kp.size || idx2 * 2 + 1 >= kp.size) continue
             
             val x1 = kp[idx1 * 2] * imageWidth * scaleFactor
@@ -184,21 +213,46 @@ class OverlayView @JvmOverloads constructor(
             val x2 = kp[idx2 * 2] * imageWidth * scaleFactor
             val y2 = kp[idx2 * 2 + 1] * imageHeight * scaleFactor
             
-            // Check if both points are valid (not zero, which indicates missing detection)
+            if (isValidPoint(kp[idx1 * 2], kp[idx1 * 2 + 1]) && 
+                isValidPoint(kp[idx2 * 2], kp[idx2 * 2 + 1])) {
+                canvas.drawLine(x1, y1, x2, y2, faceLinePaint)
+            }
+        }
+        
+        // Draw body connections (RED)
+        for ((idx1, idx2) in bodyConnections) {
+            if (idx1 * 2 + 1 >= kp.size || idx2 * 2 + 1 >= kp.size) continue
+            
+            val x1 = kp[idx1 * 2] * imageWidth * scaleFactor
+            val y1 = kp[idx1 * 2 + 1] * imageHeight * scaleFactor
+            val x2 = kp[idx2 * 2] * imageWidth * scaleFactor
+            val y2 = kp[idx2 * 2 + 1] * imageHeight * scaleFactor
+            
             if (isValidPoint(kp[idx1 * 2], kp[idx1 * 2 + 1]) && 
                 isValidPoint(kp[idx2 * 2], kp[idx2 * 2 + 1])) {
                 canvas.drawLine(x1, y1, x2, y2, linePaint)
             }
         }
 
-        // Draw keypoints
-        for (i in 0 until 25) {
+        // Draw face keypoints (YELLOW) - indices 0-10
+        for (i in 0 until 11) {
             if (i * 2 + 1 >= kp.size) break
             
             val x = kp[i * 2] * imageWidth * scaleFactor
             val y = kp[i * 2 + 1] * imageHeight * scaleFactor
             if (isValidPoint(kp[i * 2], kp[i * 2 + 1])) {
-                canvas.drawCircle(x, y, 8f, keypointPaint)
+                canvas.drawCircle(x, y, 12f, facePaint)
+            }
+        }
+        
+        // Draw body keypoints (RED) - indices 11-24
+        for (i in 11 until 25) {
+            if (i * 2 + 1 >= kp.size) break
+            
+            val x = kp[i * 2] * imageWidth * scaleFactor
+            val y = kp[i * 2 + 1] * imageHeight * scaleFactor
+            if (isValidPoint(kp[i * 2], kp[i * 2 + 1])) {
+                canvas.drawCircle(x, y, 12f, keypointPaint)
             }
         }
     }
@@ -262,7 +316,7 @@ class OverlayView @JvmOverloads constructor(
             val x = kp[globalIdx] * imageWidth * scaleFactor
             val y = kp[globalIdx + 1] * imageHeight * scaleFactor
             if (isValidPoint(kp[globalIdx], kp[globalIdx + 1])) {
-                canvas.drawCircle(x, y, 6f, handPaint)
+                canvas.drawCircle(x, y, 9f, handPaint)
             }
         }
     }
