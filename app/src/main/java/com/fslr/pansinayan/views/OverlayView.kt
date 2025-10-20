@@ -125,10 +125,11 @@ class OverlayView @JvmOverloads constructor(
     
     /**
      * Count valid (non-zero) keypoints.
+     * New total: 89 points (25 pose + 21 left hand + 21 right hand + 22 face)
      */
     private fun countValidPoints(kp: FloatArray): Int {
         var count = 0
-        for (i in 0 until minOf(78, kp.size / 2)) {
+        for (i in 0 until minOf(89, kp.size / 2)) {
             if (isValidPoint(kp[i * 2], kp[i * 2 + 1])) {
                 count++
             }
@@ -142,7 +143,7 @@ class OverlayView @JvmOverloads constructor(
         val kp = keypoints
         
         // Draw debug info if no keypoints
-        if (kp == null || kp.size < 156) {
+        if (kp == null || kp.size < 178) {
             if (debugMode) {
                 drawDebugInfo(canvas, "No keypoints available", kp?.size ?: 0)
             }
@@ -150,13 +151,14 @@ class OverlayView @JvmOverloads constructor(
         }
 
         drawPoseSkeleton(canvas, kp)
-        drawHandSkeleton(canvas, kp, 50)
-        drawHandSkeleton(canvas, kp, 92)
+        drawHandSkeleton(canvas, kp, 50)  // Left hand starts at index 25 (50 values in)
+        drawHandSkeleton(canvas, kp, 92)  // Right hand starts at index 46 (92 values in)
+        drawFaceLandmarks(canvas, kp, 134) // Face starts at index 67 (134 values in)
         
         // Draw debug info if enabled
         if (debugMode) {
             val validPoints = countValidPoints(kp)
-            drawDebugInfo(canvas, "Valid keypoints: $validPoints / 78", kp.size)
+            drawDebugInfo(canvas, "Valid keypoints: $validPoints / 89", kp.size)
         }
     }
     
@@ -183,15 +185,9 @@ class OverlayView @JvmOverloads constructor(
 
     /**
      * Draw pose skeleton with connections.
+     * Note: Face keypoints (indices 0-10) from pose are now replaced by proper Face Landmarker
      */
     private fun drawPoseSkeleton(canvas: Canvas, kp: FloatArray) {
-        // Define face connections (YELLOW)
-        val faceConnections = listOf(
-            // Face outline
-            Pair(0, 1), Pair(1, 2), Pair(2, 3), Pair(3, 7),
-            Pair(0, 4), Pair(4, 5), Pair(5, 6), Pair(6, 8)
-        )
-        
         // Define body connections (RED)
         val bodyConnections = listOf(
             // Shoulders
@@ -203,21 +199,6 @@ class OverlayView @JvmOverloads constructor(
             // Torso
             Pair(11, 23), Pair(12, 24), Pair(23, 24)
         )
-
-        // Draw face connections (YELLOW)
-        for ((idx1, idx2) in faceConnections) {
-            if (idx1 * 2 + 1 >= kp.size || idx2 * 2 + 1 >= kp.size) continue
-            
-            val x1 = kp[idx1 * 2] * imageWidth * scaleFactor
-            val y1 = kp[idx1 * 2 + 1] * imageHeight * scaleFactor
-            val x2 = kp[idx2 * 2] * imageWidth * scaleFactor
-            val y2 = kp[idx2 * 2 + 1] * imageHeight * scaleFactor
-            
-            if (isValidPoint(kp[idx1 * 2], kp[idx1 * 2 + 1]) && 
-                isValidPoint(kp[idx2 * 2], kp[idx2 * 2 + 1])) {
-                canvas.drawLine(x1, y1, x2, y2, faceLinePaint)
-            }
-        }
         
         // Draw body connections (RED)
         for ((idx1, idx2) in bodyConnections) {
@@ -231,17 +212,6 @@ class OverlayView @JvmOverloads constructor(
             if (isValidPoint(kp[idx1 * 2], kp[idx1 * 2 + 1]) && 
                 isValidPoint(kp[idx2 * 2], kp[idx2 * 2 + 1])) {
                 canvas.drawLine(x1, y1, x2, y2, linePaint)
-            }
-        }
-
-        // Draw face keypoints (YELLOW) - indices 0-10
-        for (i in 0 until 11) {
-            if (i * 2 + 1 >= kp.size) break
-            
-            val x = kp[i * 2] * imageWidth * scaleFactor
-            val y = kp[i * 2 + 1] * imageHeight * scaleFactor
-            if (isValidPoint(kp[i * 2], kp[i * 2 + 1])) {
-                canvas.drawCircle(x, y, 12f, facePaint)
             }
         }
         
@@ -317,6 +287,68 @@ class OverlayView @JvmOverloads constructor(
             val y = kp[globalIdx + 1] * imageHeight * scaleFactor
             if (isValidPoint(kp[globalIdx], kp[globalIdx + 1])) {
                 canvas.drawCircle(x, y, 9f, handPaint)
+            }
+        }
+    }
+    
+    /**
+     * Draw minimal face landmarks (22 points).
+     * These are: 8 lips, 6 eyes, 6 eyebrows, 2 nose
+     * @param startIdx Starting index in the keypoints array (134 for face)
+     */
+    private fun drawFaceLandmarks(canvas: Canvas, kp: FloatArray, startIdx: Int) {
+        // Lip connections follow natural mouth contour (8 points)
+        // 0: Left corner (61), 1: Upper left-outer (185), 2: Upper left-center (40),
+        // 3: Upper right-center (39), 4: Right corner (291), 5: Lower right-center (321),
+        // 6: Lower bottom center (17), 7: Lower left-center (146)
+        val lipConnections = listOf(
+            // Upper lip (left to right)
+            Pair(0, 1),  // Left corner → upper left-outer
+            Pair(1, 2),  // Upper left-outer → upper left-center
+            Pair(2, 3),  // Upper left-center → upper right-center
+            Pair(3, 4),  // Upper right-center → right corner
+            
+            // Lower lip (right to left, completing the contour)
+            Pair(4, 5),  // Right corner → lower right-center
+            Pair(5, 6),  // Lower right-center → lower bottom center
+            Pair(6, 7),  // Lower bottom center → lower left-center
+            Pair(7, 0)   // Lower left-center → left corner (close loop)
+        )
+        
+        // Draw lip connections (YELLOW)
+        for ((idx1, idx2) in lipConnections) {
+            val globalIdx1 = startIdx + idx1 * 2
+            val globalIdx2 = startIdx + idx2 * 2
+            
+            if (globalIdx1 + 1 >= kp.size || globalIdx2 + 1 >= kp.size) continue
+            
+            val x1 = kp[globalIdx1] * imageWidth * scaleFactor
+            val y1 = kp[globalIdx1 + 1] * imageHeight * scaleFactor
+            val x2 = kp[globalIdx2] * imageWidth * scaleFactor
+            val y2 = kp[globalIdx2 + 1] * imageHeight * scaleFactor
+            
+            if (isValidPoint(kp[globalIdx1], kp[globalIdx1 + 1]) && 
+                isValidPoint(kp[globalIdx2], kp[globalIdx2 + 1])) {
+                canvas.drawLine(x1, y1, x2, y2, faceLinePaint)
+            }
+        }
+        
+        // Draw all 22 face keypoints (YELLOW)
+        for (i in 0 until 22) {
+            val globalIdx = startIdx + i * 2
+            if (globalIdx + 1 >= kp.size) break
+            
+            val x = kp[globalIdx] * imageWidth * scaleFactor
+            val y = kp[globalIdx + 1] * imageHeight * scaleFactor
+            if (isValidPoint(kp[globalIdx], kp[globalIdx + 1])) {
+                // Use different sizes for different features
+                val radius = when (i) {
+                    in 0..7 -> 8f    // Lips - medium
+                    in 8..13 -> 6f   // Eyes - small
+                    in 14..19 -> 6f  // Eyebrows - small
+                    else -> 7f       // Nose - medium
+                }
+                canvas.drawCircle(x, y, radius, facePaint)
             }
         }
     }
