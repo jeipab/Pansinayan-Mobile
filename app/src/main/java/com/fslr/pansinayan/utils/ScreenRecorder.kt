@@ -99,26 +99,29 @@ class ScreenRecorder(private val context: Context) {
                 return
             }
 
-            // Step 5: Create VirtualDisplay (AFTER MediaRecorder is prepared)
-            virtualDisplay = createVirtualDisplay(width, height, dpi)
-            if (virtualDisplay == null) {
-                Log.e(TAG, "Failed to create VirtualDisplay")
-                cleanup()
-                callback(false, "Failed to create VirtualDisplay")
-                return
-            }
+            // Step 5: Add a small delay before creating VirtualDisplay to avoid conflicts
+            handler.postDelayed({
+                // Create VirtualDisplay with PUBLIC flag to reduce conflicts
+                virtualDisplay = createVirtualDisplay(width, height, dpi)
+                if (virtualDisplay == null) {
+                    Log.e(TAG, "Failed to create VirtualDisplay")
+                    cleanup()
+                    callback(false, "Failed to create VirtualDisplay")
+                    return@postDelayed
+                }
 
-            // Step 6: Start MediaRecorder
-            try {
-                mediaRecorder?.start()
-                isRecording = true
-                Log.i(TAG, "Recording started successfully")
-                callback(true, null)
-            } catch (e: Exception) {
-                Log.e(TAG, "Failed to start MediaRecorder", e)
-                cleanup()
-                callback(false, "Failed to start recording: ${e.message}")
-            }
+                // Step 6: Start MediaRecorder
+                try {
+                    mediaRecorder?.start()
+                    isRecording = true
+                    Log.i(TAG, "Recording started successfully")
+                    callback(true, null)
+                } catch (e: Exception) {
+                    Log.e(TAG, "Failed to start MediaRecorder", e)
+                    cleanup()
+                    callback(false, "Failed to start recording: ${e.message}")
+                }
+            }, 100) // Small delay to let camera stabilize
 
         } catch (e: Exception) {
             Log.e(TAG, "Error starting recording", e)
@@ -234,10 +237,14 @@ class ScreenRecorder(private val context: Context) {
                 return null
             }
 
+            // Use PUBLIC flag instead of AUTO_MIRROR to reduce conflicts
+            val flags = DisplayManager.VIRTUAL_DISPLAY_FLAG_PUBLIC or 
+                       DisplayManager.VIRTUAL_DISPLAY_FLAG_PRESENTATION
+
             mediaProjection?.createVirtualDisplay(
                 "ScreenRecorder",
                 width, height, dpi,
-                DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
+                flags,
                 surface,
                 null,
                 handler

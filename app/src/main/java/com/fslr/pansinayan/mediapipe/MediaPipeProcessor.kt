@@ -271,7 +271,7 @@ class MediaPipeProcessor(
         successCount++
         listener?.onKeypointsExtracted(keypoints, latestImageWidth, latestImageHeight)
         
-        if (successCount % 30 == 0) {
+        if (successCount % 100 == 0) {
             Log.d(TAG, "Processed $successCount frames")
         }
     }
@@ -516,6 +516,30 @@ class MediaPipeProcessor(
         poseLandmarker = null
         faceLandmarker = null
         Log.i(TAG, "MediaPipe released (Hand, Pose, Face)")
+    }
+    
+    /**
+     * Restart MediaPipe processors - useful when they get frozen/deadlocked.
+     * This fully recreates all landmarkers to clear any internal deadlocks.
+     */
+    fun restart() {
+        Log.i(TAG, "Restarting MediaPipe processors...")
+        try {
+            // Release old instances
+            handLandmarker?.close()
+            poseLandmarker?.close()
+            faceLandmarker?.close()
+            
+            // Small delay to ensure cleanup
+            Thread.sleep(200)
+            
+            // Recreate all landmarkers
+            setupLandmarkers()
+            
+            Log.i(TAG, "MediaPipe processors restarted successfully")
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to restart MediaPipe processors", e)
+        }
     }
 
     fun getStats(): Pair<Int, Int> = Pair(successCount, failureCount)

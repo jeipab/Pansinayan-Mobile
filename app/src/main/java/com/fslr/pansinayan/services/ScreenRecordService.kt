@@ -14,6 +14,7 @@ import androidx.core.app.NotificationCompat
 import com.fslr.pansinayan.R
 import com.fslr.pansinayan.activities.MainActivity
 import com.fslr.pansinayan.utils.ScreenRecorder
+import kotlinx.coroutines.*
 
 class ScreenRecordService : Service() {
     companion object {
@@ -32,6 +33,7 @@ class ScreenRecordService : Service() {
         const val EXTRA_DPI = "dpi"
         
         const val BROADCAST_RECORDING_STOPPED = "com.fslr.pansinayan.RECORDING_STOPPED"
+        const val BROADCAST_RECORDING_STARTED = "com.fslr.pansinayan.RECORDING_STARTED"
         const val EXTRA_RECORDING_URI = "recording_uri"
         const val EXTRA_ERROR_MESSAGE = "error_message"
         
@@ -43,6 +45,7 @@ class ScreenRecordService : Service() {
 
     private lateinit var screenRecorder: ScreenRecorder
     private val handler = Handler(Looper.getMainLooper())
+    private val serviceScope = CoroutineScope(Dispatchers.Default + SupervisorJob())
     private var startTime: Long = 0
     private var notificationBuilder: NotificationCompat.Builder? = null
 
@@ -82,7 +85,10 @@ class ScreenRecordService : Service() {
                     stopSelf()
                 } else {
                     startForeground()
-                    startRecordingInternal(resultCode, data, width, height, dpi)
+                    // Add a small delay to avoid conflicts with camera pipeline
+                    handler.postDelayed({
+                        startRecordingInternal(resultCode, data, width, height, dpi)
+                    }, 200)
                 }
             }
             ACTION_STOP_RECORDING -> {
@@ -184,6 +190,9 @@ class ScreenRecordService : Service() {
 
         startTime = System.currentTimeMillis()
         
+        // Send broadcast that recording is starting
+        sendStartedBroadcast()
+        
         screenRecorder.startRecording(resultCode, data, width, height, dpi) { success, errorMessage ->
             if (success) {
                 Log.i(TAG, "Recording started successfully")
@@ -240,6 +249,13 @@ class ScreenRecordService : Service() {
         }, 1000)
     }
 
+    private fun sendStartedBroadcast() {
+        val intent = Intent(BROADCAST_RECORDING_STARTED).apply {
+            setPackage(packageName)
+        }
+        sendBroadcast(intent)
+    }
+
     private fun sendSuccessBroadcast(uri: Uri) {
         val intent = Intent(BROADCAST_RECORDING_STOPPED).apply {
             putExtra(EXTRA_RECORDING_URI, uri.toString())
@@ -259,6 +275,7 @@ class ScreenRecordService : Service() {
     override fun onDestroy() {
         super.onDestroy()
         handler.removeCallbacksAndMessages(null)
+        serviceScope.cancel()
         
         // Make sure recording is stopped
         if (screenRecorder.isRecording()) {

@@ -33,6 +33,7 @@ import com.fslr.pansinayan.views.OverlayView
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
 import java.util.*
 
@@ -86,12 +87,24 @@ class MainActivity : AppCompatActivity() {
     // Recording state
     private var isRecording = false
     private var recordingStartTime = 0L
+    private var pendingRecordingData: Pair<Int, Intent?>? = null
 
     // Broadcast receiver for recording status
     private val recordingStatusReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
             when (intent?.action) {
+                ScreenRecordService.BROADCAST_RECORDING_STARTED -> {
+                    Log.i(TAG, "Recording started broadcast received")
+                    isRecording = true
+                    updateRecordingUI(true)
+                    
+                    // Notify pipeline that recording has started
+                    if (::recognitionPipeline.isInitialized) {
+                        recognitionPipeline.onRecordingStarted()
+                    }
+                }
                 ScreenRecordService.BROADCAST_RECORDING_STOPPED -> {
+                    Log.i(TAG, "Recording stopped broadcast received")
                     isRecording = false
                     updateRecordingUI(false)
                     
@@ -115,6 +128,11 @@ class MainActivity : AppCompatActivity() {
                             Toast.LENGTH_LONG
                         ).show()
                         Log.e(TAG, "Failed to save recording: $errorMessage")
+                    }
+                    
+                    // Notify pipeline that recording has stopped
+                    if (::recognitionPipeline.isInitialized) {
+                        recognitionPipeline.onRecordingStopped()
                     }
                 }
             }
@@ -169,8 +187,14 @@ class MainActivity : AppCompatActivity() {
     /**
      * Register broadcast receiver for recording status updates.
      */
+    @Suppress("UnspecifiedRegisterReceiverFlag")
     private fun registerRecordingStatusReceiver() {
-        val filter = IntentFilter(ScreenRecordService.BROADCAST_RECORDING_STOPPED)
+        val filter = IntentFilter().apply {
+            addAction(ScreenRecordService.BROADCAST_RECORDING_STARTED)
+            addAction(ScreenRecordService.BROADCAST_RECORDING_STOPPED)
+        }
+        
+        // Properly handles Android 13+ requirement with version check
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             registerReceiver(recordingStatusReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
         } else {
@@ -277,6 +301,9 @@ class MainActivity : AppCompatActivity() {
     private fun startRecording(resultCode: Int, data: Intent?) {
         recordingStartTime = System.currentTimeMillis()
         
+        // Store data in case we need to retry
+        pendingRecordingData = Pair(resultCode, data)
+        
         // Get display metrics from Activity
         val metrics = DisplayMetrics()
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
@@ -308,8 +335,7 @@ class MainActivity : AppCompatActivity() {
             startService(serviceIntent)
         }
         
-        isRecording = true
-        updateRecordingUI(true)
+        // UI will be updated when we receive the broadcast
         Toast.makeText(this, "Starting recording...", Toast.LENGTH_SHORT).show()
     }
 
@@ -494,6 +520,11 @@ class MainActivity : AppCompatActivity() {
         if (hasCameraPermission() && ::recognitionPipeline.isInitialized) {
             recognitionPipeline.start()
             Log.i(TAG, "Pipeline started")
+            
+            // If recording is active, notify pipeline
+            if (isRecording) {
+                recognitionPipeline.onRecordingStarted()
+            }
         }
     }
 

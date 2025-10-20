@@ -10,10 +10,12 @@ import com.fslr.pansinayan.inference.TFLiteModelRunner
 import com.fslr.pansinayan.mediapipe.MediaPipeProcessor
 import com.fslr.pansinayan.utils.LabelMapper
 import kotlinx.coroutines.*
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicLong
 
 /**
- * Orchestrates the complete recognition pipeline.
+ * Orchestrates the complete recognition pipeline with health monitoring.
  * 
  * Pipeline flow:
  * Camera → MediaPipe → Buffer → TFLite → Temporal Logic → UI Callback
@@ -22,8 +24,9 @@ import java.util.concurrent.atomic.AtomicInteger
  * - Coordinate all components
  * - Manage threading and async operations
  * - Handle lifecycle (start/stop/pause)
- * - Implement inference scheduling (don't run every frame)
- * - Provide callbacks for UI updates
+ * - Implement inference scheduling
+ * - Monitor pipeline health and recover from freezes
+ * - Handle recording state changes
  * 
  * Usage:
  *   val pipeline = RecognitionPipeline(context, lifecycleOwner, previewView) { event ->
@@ -44,6 +47,8 @@ class RecognitionPipeline(
     companion object {
         private const val TAG = "RecognitionPipeline"
         private const val INFERENCE_INTERVAL = 10  // Run inference every N frames
+        private const val HEALTH_CHECK_INTERVAL_MS = 2000L  // Check pipeline health every 2 seconds
+        private const val FRAME_TIMEOUT_MS = 3000L  // Consider pipeline frozen after 3 seconds
     }
 
     // Core components
@@ -61,7 +66,15 @@ class RecognitionPipeline(
     private val frameCounter = AtomicInteger(0)
     
     // State
-    private var isRunning = false
+    private val isRunning = AtomicBoolean(false)
+    private val isPaused = AtomicBoolean(false)
+    private val isRecording = AtomicBoolean(false)
+    private val isRestartingMediaPipe = AtomicBoolean(false)
+    
+    // Health monitoring
+    private val lastFrameTime = AtomicLong(0)
+    private val lastKeypointTime = AtomicLong(0)
+    private var healthMonitorJob: Job? = null
 
     /**
      * Initialize all components.
@@ -93,30 +106,53 @@ class RecognitionPipeline(
      * Start the recognition pipeline.
      */
     fun start() {
-        if (isRunning) {
+        if (isRunning.get()) {
             Log.w(TAG, "Pipeline already running")
             return
         }
 
-        isRunning = true
+        isRunning.set(true)
+        isPaused.set(false)
         frameCounter.set(0)
+        lastFrameTime.set(System.currentTimeMillis())
+        lastKeypointTime.set(System.currentTimeMillis())
         
         Log.i(TAG, "Starting recognition pipeline...")
 
         // Start camera with frame callback
         cameraManager.startCamera { frame ->
-            processFrame(frame)
+            if (!isPaused.get()) {
+                processFrame(frame)
+            } else {
+                frame.close()
+            }
         }
+        
+        // Start health monitoring
+        startHealthMonitor()
     }
 
     private fun processFrame(imageProxy: ImageProxy) {
+        lastFrameTime.set(System.currentTimeMillis())
+        
+        // Skip frames if MediaPipe is restarting (prevents crash)
+        if (isRestartingMediaPipe.get()) {
+            imageProxy.close()
+            return
+        }
+        
         mediaPipeProcessor.detectLiveStream(imageProxy, isFrontCamera = cameraManager.isFrontCamera())
     }
 
     override fun onKeypointsExtracted(keypoints: FloatArray?, imageWidth: Int, imageHeight: Int) {
+        if (isPaused.get()) return
+        
+        lastKeypointTime.set(System.currentTimeMillis())
+        
         pipelineScope.launch {
             try {
                 val currentFrame = frameCounter.incrementAndGet()
+                
                 // Use new hand-face occlusion detection (aligned with preprocessing pipeline)
                 val isOccluded = keypoints?.let { mediaPipeProcessor.detectHandFaceOcclusion(it) } ?: false
                 
@@ -183,23 +219,148 @@ class RecognitionPipeline(
     }
 
     /**
+     * Start health monitoring to detect frozen pipeline.
+     */
+    private fun startHealthMonitor() {
+        healthMonitorJob?.cancel()
+        healthMonitorJob = pipelineScope.launch {
+            while (isActive && isRunning.get()) {
+                delay(HEALTH_CHECK_INTERVAL_MS)
+                
+                if (!isPaused.get()) {
+                    checkPipelineHealth()
+                }
+            }
+        }
+    }
+
+    /**
+     * Check pipeline health and recover if necessary.
+     */
+    private fun checkPipelineHealth() {
+        val currentTime = System.currentTimeMillis()
+        val timeSinceLastFrame = currentTime - lastFrameTime.get()
+        val timeSinceLastKeypoint = currentTime - lastKeypointTime.get()
+        
+        // Check if pipeline is frozen
+        if (timeSinceLastFrame > FRAME_TIMEOUT_MS) {
+            Log.w(TAG, "Camera frame timeout detected! Time: ${timeSinceLastFrame}ms")
+            recoverPipeline("Camera frame timeout")
+        } else if (timeSinceLastKeypoint > FRAME_TIMEOUT_MS) {
+            Log.w(TAG, "Keypoint extraction timeout detected! Time: ${timeSinceLastKeypoint}ms")
+            recoverPipeline("Keypoint extraction timeout")
+        }
+    }
+
+    /**
+     * Recover pipeline when frozen.
+     */
+    private fun recoverPipeline(reason: String) {
+        Log.i(TAG, "Starting pipeline recovery. Reason: $reason")
+        
+        pipelineScope.launch {
+            try {
+                // Keypoint timeout = MediaPipe is frozen, needs restart
+                if (reason.contains("Keypoint") || reason.contains("keypoint")) {
+                    Log.i(TAG, "MediaPipe frozen detected, restarting MediaPipe processor...")
+                    withContext(Dispatchers.IO) {
+                        safeRestartMediaPipe()
+                    }
+                }
+                // Camera timeout = camera issue, restart camera
+                else if (reason.contains("Camera") || reason.contains("frame")) {
+                    Log.i(TAG, "Camera frame timeout, restarting camera...")
+                    cameraManager.restartCamera()
+                    lastFrameTime.set(System.currentTimeMillis())
+                }
+                // Fallback: full restart
+                else {
+                    Log.i(TAG, "Unknown issue, full restart...")
+                    withContext(Dispatchers.Main) {
+                        pause()
+                        delay(500)
+                        resume()
+                    }
+                }
+                
+                Log.i(TAG, "Pipeline recovery completed")
+            } catch (e: Exception) {
+                Log.e(TAG, "Pipeline recovery failed", e)
+            }
+        }
+    }
+
+    /**
+     * Notify pipeline that recording has started.
+     */
+    fun onRecordingStarted() {
+        Log.i(TAG, "Recording started, protecting pipeline...")
+        isRecording.set(true)
+        
+        // Proactively restart MediaPipe to prevent freeze
+        pipelineScope.launch {
+            delay(300)
+            
+            if (isRunning.get() && !isPaused.get()) {
+                Log.i(TAG, "Proactively restarting MediaPipe to prevent recording conflict...")
+                withContext(Dispatchers.IO) {
+                    try {
+                        safeRestartMediaPipe()
+                        Log.i(TAG, "MediaPipe restarted successfully for recording")
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Failed to restart MediaPipe for recording", e)
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * Notify pipeline that recording has stopped.
+     */
+    fun onRecordingStopped() {
+        Log.i(TAG, "Recording stopped, resuming normal operation...")
+        isRecording.set(false)
+        
+        // Restart MediaPipe to ensure clean state after recording
+        pipelineScope.launch {
+            delay(300)
+            
+            if (isRunning.get() && !isPaused.get()) {
+                Log.i(TAG, "Restarting MediaPipe after recording stopped...")
+                withContext(Dispatchers.IO) {
+                    try {
+                        safeRestartMediaPipe()
+                        Log.i(TAG, "MediaPipe restarted successfully after recording")
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Failed to restart MediaPipe after recording", e)
+                    }
+                }
+            }
+        }
+    }
+
+    /**
      * Stop the recognition pipeline.
      */
     fun stop() {
-        if (!isRunning) {
+        if (!isRunning.get()) {
             return
         }
 
-        isRunning = false
+        isRunning.set(false)
         
         Log.i(TAG, "Stopping recognition pipeline...")
+
+        // Stop health monitor
+        healthMonitorJob?.cancel()
 
         // Stop camera
         cameraManager.stopCamera()
 
-        // Cancel all coroutines
-        pipelineScope.cancel()
-
+        // DON'T cancel pipelineScope here - it breaks restart!
+        // Scope will be cancelled in release() when truly done
+        
         // Clear buffer
         bufferManager.clear()
 
@@ -216,6 +377,10 @@ class RecognitionPipeline(
     fun release() {
         stop()
         
+        // Now cancel the scope (activity is being destroyed)
+        pipelineScope.cancel()
+        
+        cameraManager.release()
         mediaPipeProcessor.release()
         modelRunner.release()
         
@@ -231,6 +396,9 @@ class RecognitionPipeline(
         val avgInferenceTime = modelRunner.getAverageInferenceTime()
         val temporalStats = temporalRecognizer.getStats()
         
+        val timeSinceLastFrame = System.currentTimeMillis() - lastFrameTime.get()
+        val timeSinceLastKeypoint = System.currentTimeMillis() - lastKeypointTime.get()
+        
         return PipelineStats(
             framesProcessed = cameraProcessed,
             framesTotal = cameraTotal,
@@ -238,7 +406,10 @@ class RecognitionPipeline(
             keypointFailure = mediapipeFailure,
             avgInferenceTimeMs = avgInferenceTime,
             temporalStats = temporalStats,
-            bufferSize = bufferManager.getBufferSize()
+            bufferSize = bufferManager.getBufferSize(),
+            timeSinceLastFrame = timeSinceLastFrame,
+            timeSinceLastKeypoint = timeSinceLastKeypoint,
+            isRecording = isRecording.get()
         )
     }
 
@@ -246,7 +417,7 @@ class RecognitionPipeline(
      * Pause recognition (stop processing but keep resources).
      */
     fun pause() {
-        // Implement pause logic if needed
+        isPaused.set(true)
         Log.i(TAG, "Pipeline paused")
     }
 
@@ -254,7 +425,9 @@ class RecognitionPipeline(
      * Resume recognition after pause.
      */
     fun resume() {
-        // Implement resume logic if needed
+        isPaused.set(false)
+        lastFrameTime.set(System.currentTimeMillis())
+        lastKeypointTime.set(System.currentTimeMillis())
         Log.i(TAG, "Pipeline resumed")
     }
 
@@ -271,6 +444,48 @@ class RecognitionPipeline(
      */
     fun isFrontCamera(): Boolean {
         return cameraManager.isFrontCamera()
+    }
+    
+    /**
+     * Manually restart MediaPipe processors.
+     * Useful for testing or recovering from frozen state.
+     */
+    fun restartMediaPipe() {
+        Log.i(TAG, "Manual MediaPipe restart called")
+        safeRestartMediaPipe()
+    }
+    
+    /**
+     * Safely restart MediaPipe by blocking frames during restart.
+     * Prevents race condition crashes.
+     */
+    private fun safeRestartMediaPipe() {
+        if (isRestartingMediaPipe.getAndSet(true)) {
+            Log.w(TAG, "MediaPipe restart already in progress, skipping...")
+            return
+        }
+        
+        try {
+            Log.i(TAG, "Blocking frames for MediaPipe restart...")
+            
+            // Wait for in-flight frames to clear (max 200ms)
+            Thread.sleep(200)
+            
+            // Restart MediaPipe
+            mediaPipeProcessor.restart()
+            
+            // Reset timestamps
+            lastKeypointTime.set(System.currentTimeMillis())
+            lastFrameTime.set(System.currentTimeMillis())
+            
+            Log.i(TAG, "MediaPipe restart completed, resuming frames")
+            
+        } catch (e: Exception) {
+            Log.e(TAG, "MediaPipe restart failed", e)
+        } finally {
+            // Always unblock frames
+            isRestartingMediaPipe.set(false)
+        }
     }
 }
 
@@ -294,7 +509,10 @@ data class PipelineStats(
     val keypointFailure: Int,
     val avgInferenceTimeMs: Long,
     val temporalStats: String,
-    val bufferSize: Int
+    val bufferSize: Int,
+    val timeSinceLastFrame: Long,
+    val timeSinceLastKeypoint: Long,
+    val isRecording: Boolean
 ) {
     override fun toString(): String {
         return """
@@ -304,6 +522,9 @@ data class PipelineStats(
             - Inference: ${avgInferenceTimeMs}ms avg
             - Buffer: $bufferSize frames
             - Temporal: $temporalStats
+            - Last frame: ${timeSinceLastFrame}ms ago
+            - Last keypoint: ${timeSinceLastKeypoint}ms ago
+            - Recording: $isRecording
         """.trimIndent()
     }
 }

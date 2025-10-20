@@ -7,17 +7,21 @@ import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.LifecycleOwner
+import kotlinx.coroutines.*
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicLong
 
 /**
- * Manages camera operations using CameraX API.
+ * Manages camera operations using CameraX API with automatic recovery.
  * 
  * Responsibilities:
  * - Initialize and manage CameraX lifecycle
  * - Provide live camera preview
  * - Sample frames at target FPS for processing
- * - Deliver ImageProxy frames directly to MediaPipe (no conversion needed)
+ * - Deliver ImageProxy frames directly to MediaPipe
+ * - Automatically recover from frame freezes
  * 
  * Usage:
  *   val cameraManager = CameraManager(context, lifecycleOwner, previewView, targetFps = 15)
@@ -34,6 +38,8 @@ class CameraManager(
 ) {
     companion object {
         private const val TAG = "CameraManager"
+        private const val FRAME_TIMEOUT_MS = 3000L  // 3 seconds without frames triggers recovery
+        private const val RECOVERY_DELAY_MS = 500L
     }
 
     private var cameraProvider: ProcessCameraProvider? = null
@@ -51,6 +57,15 @@ class CameraManager(
     // Statistics
     private var totalFrames = 0
     private var processedFrames = 0
+    
+    // Frame timeout detection
+    private val lastFrameTime = AtomicLong(0)
+    private val isRecovering = AtomicBoolean(false)
+    private val monitorScope = CoroutineScope(Dispatchers.Default + SupervisorJob())
+    private var monitorJob: Job? = null
+    
+    // State tracking
+    private var isStarted = false
 
     /**
      * Start camera with preview and frame analysis.
@@ -59,12 +74,14 @@ class CameraManager(
      */
     fun startCamera(onFrameReady: (ImageProxy) -> Unit) {
         frameCallback = onFrameReady
+        isStarted = true
         
         val cameraProviderFuture = ProcessCameraProvider.getInstance(context)
         cameraProviderFuture.addListener({
             try {
                 cameraProvider = cameraProviderFuture.get()
                 bindCameraUseCases()
+                startFrameMonitor()
                 Log.i(TAG, "Camera started successfully at $targetFps FPS target")
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to start camera", e)
@@ -109,6 +126,10 @@ class CameraManager(
 
             val cameraName = if (isFrontCamera()) "front" else "back"
             Log.i(TAG, "Camera use cases bound successfully ($cameraName camera)")
+            
+            // Update last frame time
+            lastFrameTime.set(System.currentTimeMillis())
+            
         } catch (e: Exception) {
             Log.e(TAG, "Use case binding failed", e)
         }
@@ -120,6 +141,8 @@ class CameraManager(
     private inner class FrameAnalyzer : ImageAnalysis.Analyzer {
         override fun analyze(image: ImageProxy) {
             totalFrames++
+            lastFrameTime.set(System.currentTimeMillis())
+            
             val currentTime = System.currentTimeMillis()
 
             // Frame rate throttling - only process frames at target FPS
@@ -148,13 +171,90 @@ class CameraManager(
         }
     }
 
+    /**
+     * Start monitoring for frame timeouts.
+     */
+    private fun startFrameMonitor() {
+        monitorJob?.cancel()
+        monitorJob = monitorScope.launch {
+            while (isActive && isStarted) {
+                delay(1000) // Check every second
+                
+                val timeSinceLastFrame = System.currentTimeMillis() - lastFrameTime.get()
+                
+                if (timeSinceLastFrame > FRAME_TIMEOUT_MS && !isRecovering.get()) {
+                    Log.w(TAG, "Frame timeout detected! Time since last frame: ${timeSinceLastFrame}ms")
+                    recoverCamera()
+                }
+            }
+        }
+    }
 
     /**
-     * Stop camera and release resources.
+     * Recover camera when frames stop coming.
+     */
+    private fun recoverCamera() {
+        if (isRecovering.getAndSet(true)) {
+            Log.d(TAG, "Already recovering, skipping...")
+            return
+        }
+
+        Log.i(TAG, "Starting camera recovery...")
+        
+        monitorScope.launch {
+            try {
+                // Step 1: Clear current analyzer
+                withContext(Dispatchers.Main) {
+                    imageAnalyzer?.clearAnalyzer()
+                }
+                
+                delay(RECOVERY_DELAY_MS)
+                
+                // Step 2: Rebind camera use cases
+                withContext(Dispatchers.Main) {
+                    bindCameraUseCases()
+                }
+                
+                delay(RECOVERY_DELAY_MS)
+                
+                Log.i(TAG, "Camera recovery completed")
+                
+            } catch (e: Exception) {
+                Log.e(TAG, "Camera recovery failed", e)
+            } finally {
+                isRecovering.set(false)
+                lastFrameTime.set(System.currentTimeMillis())
+            }
+        }
+    }
+
+    /**
+     * Force restart camera (useful when recording starts/stops).
+     */
+    fun restartCamera() {
+        if (!isStarted) return
+        
+        Log.i(TAG, "Force restarting camera...")
+        monitorScope.launch {
+            try {
+                withContext(Dispatchers.Main) {
+                    bindCameraUseCases()
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to restart camera", e)
+            }
+        }
+    }
+
+    /**
+     * Stop camera (but keep executor alive for restart).
      */
     fun stopCamera() {
+        isStarted = false
+        monitorJob?.cancel()
         cameraProvider?.unbindAll()
-        cameraExecutor.shutdown()
+        // DON'T shutdown executor here - it breaks restart!
+        // Executor will be shutdown in release() when truly done
         Log.i(TAG, "Camera stopped. Stats: $processedFrames processed / $totalFrames total frames")
     }
 
@@ -188,6 +288,17 @@ class CameraManager(
      */
     fun isFrontCamera(): Boolean {
         return currentCameraSelector == CameraSelector.DEFAULT_FRONT_CAMERA
+    }
+    
+    /**
+     * Release all resources.
+     */
+    fun release() {
+        stopCamera()
+        monitorScope.cancel()
+        // Now shutdown executor (activity is being destroyed)
+        cameraExecutor.shutdown()
+        Log.i(TAG, "Camera executor shutdown")
     }
 }
 
