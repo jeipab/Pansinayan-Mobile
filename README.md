@@ -55,6 +55,21 @@ Before building the app, export your trained PyTorch models to the TFLite format
 
 Install Python dependencies:
 
+**Note:** 
+On Ubuntu systems, you may encounter an "externally-managed-environment" error. To fix this, create a virtual environment first:
+
+```bash
+# Create a virtual environment
+python3 -m venv venv
+
+# Activate the virtual environment
+source venv/bin/activate
+
+# Install dependencies
+pip install torch onnx onnx-tf tensorflow numpy pandas
+```
+
+**For other systems or if you prefer not to use a virtual environment:**
 ```bash
 pip install torch onnx onnx-tf tensorflow numpy pandas
 ```
