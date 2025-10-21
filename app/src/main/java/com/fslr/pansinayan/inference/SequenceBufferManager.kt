@@ -35,7 +35,7 @@ class SequenceBufferManager(
     /**
      * Add a new keypoint frame to the buffer.
      * 
-     * @param keypoints FloatArray of 156 values (or null if detection failed)
+     * @param keypoints FloatArray of 178 values (89 keypoints × 2, or null if detection failed)
      */
     @Synchronized
     fun addFrame(keypoints: FloatArray?) {
@@ -54,7 +54,7 @@ class SequenceBufferManager(
      * Get the current sequence for inference.
      * Performs gap interpolation for missing keypoints.
      * 
-     * @return Array[T, 156] where T ≤ windowSize, or null if insufficient data
+     * @return Array[T, 178] where T ≤ windowSize, or null if insufficient data
      */
     @Synchronized
     fun getSequence(): Array<FloatArray>? {
@@ -80,7 +80,7 @@ class SequenceBufferManager(
      * 4. If no valid frames, leave as zeros
      */
     private fun interpolateGaps(sequence: Array<FloatArray?>): Array<FloatArray> {
-        val result = Array(sequence.size) { FloatArray(156) { 0f } }
+        val result = Array(sequence.size) { FloatArray(178) { 0f } }
         var interpolatedCount = 0
 
         for (i in sequence.indices) {
@@ -112,7 +112,7 @@ class SequenceBufferManager(
                 if (prevIdx != -1 && nextIdx != -1 && (nextIdx - prevIdx) <= maxGap) {
                     // Linear interpolation
                     val t = (i - prevIdx).toFloat() / (nextIdx - prevIdx).toFloat()
-                    for (k in 0 until 156) {
+                    for (k in 0 until 178) {
                         result[i][k] = lerp(sequence[prevIdx]!![k], sequence[nextIdx]!![k], t)
                     }
                     interpolatedCount++

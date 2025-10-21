@@ -13,7 +13,7 @@ This project provides the complete, production-ready Android scaffolding code an
 
 - **Live Recognition:** Uses CameraX for a high-performance, real-time camera feed.
 - **Dual-Model Support:** Allows real-time switching between a high-accuracy Transformer model and a lightweight GRU model.
-- **Advanced Keypoint Extraction:** Employs MediaPipe for robust extraction of 78 keypoints (pose, left hand, right hand, and face), totaling 156 data points.
+- **Advanced Keypoint Extraction:** Employs MediaPipe for robust extraction of 89 keypoints (25 pose + 21 left hand + 21 right hand + 22 face), totaling 178 data points.
 - **Skeleton Visualization:** Real-time skeleton overlay showing pose (green) and hand keypoints (yellow) for debugging and verification. Enabled by default with debug mode available via long-press.
 - **Occlusion Detection:** UI indicator shows when the user's hand blocks their face (which can affect accuracy).
 - **Persistent History:** All recognitions are saved to a local Room database for review.
@@ -27,7 +27,7 @@ The app’s recognition pipeline is designed for high performance and low latenc
 
 ```
 Camera (CameraX)
-   → MediaPipeProcessor (Extracts 156 keypoints)
+   → MediaPipeProcessor (Extracts 178 keypoints)
    → SequenceBufferManager (Builds 90-frame window)
    → TFLiteModelRunner (Runs Transformer/GRU model)
    → TemporalRecognizer (Filters results)
@@ -55,7 +55,7 @@ Before building the app, export your trained PyTorch models to the TFLite format
 
 Install Python dependencies:
 
-**Note:** 
+**Note:**
 On Ubuntu systems, you may encounter an "externally-managed-environment" error. To fix this, create a virtual environment first:
 
 ```bash
@@ -70,6 +70,7 @@ pip install torch onnx onnx-tf tensorflow numpy pandas
 ```
 
 **For other systems or if you prefer not to use a virtual environment:**
+
 ```bash
 pip install torch onnx onnx-tf tensorflow numpy pandas
 ```
