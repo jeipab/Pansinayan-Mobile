@@ -93,12 +93,31 @@ label_mapping.json
 
 ### Step 2: Set Up the Android Project
 
-1. Open **Android Studio**.
-2. Select **File > New > Project from Version Control**, then enter your repository URL.
+1. **Install Android Studio**
 
-   - Alternatively, download the ZIP, extract it, and open this folder directly in Android Studio.
+   - Download and install the latest version of [Android Studio](https://developer.android.com/studio)
+   - During installation, ensure the Android SDK, Android SDK Platform, and Android Virtual Device components are installed
 
-3. In the project panel, right-click `app/src/main/` → **New > Folder > Assets Folder** → **Finish**.
+2. **Open the Project**
+
+   - Open **Android Studio**
+   - Select **File > New > Project from Version Control**, then enter your repository URL
+   - Alternatively, download the ZIP, extract it, and select **File > Open**, then navigate to the extracted folder
+
+3. **Wait for Gradle Sync**
+
+   - Android Studio will automatically sync the project and download dependencies
+   - This may take a few minutes on the first run
+   - If sync fails, click **Sync Project with Gradle Files** (elephant icon in the toolbar)
+
+4. **Enable USB Debugging on Your Android Device** (for testing on a real phone)
+   - On your Android phone, go to **Settings > About Phone**
+   - Tap **Build Number** 7 times to enable Developer Options
+   - Go back to **Settings > System > Developer Options** (or **Settings > Developer Options** on some devices)
+   - Enable **USB Debugging**
+   - Connect your phone to your computer via USB cable
+   - On your phone, allow USB debugging when prompted (tap "OK" or "Allow")
+   - In Android Studio, your device should appear in the device dropdown at the top
 
 ---
 
@@ -133,10 +152,32 @@ Your `assets/` folder should now contain **five files total**.
 
 ### Step 5: Build and Run
 
-1. Wait for Android Studio to sync Gradle. If not, click **Sync Project with Gradle Files** (small elephant icon).
-2. Connect your Android device or start an emulator.
-3. Click the **Run 'app'** button (green play icon).
-4. Grant camera permission when prompted.
+1. **Verify Gradle Sync**
+
+   - Ensure Android Studio has finished syncing Gradle (check the bottom status bar)
+   - If needed, click **Sync Project with Gradle Files** (elephant icon in the toolbar)
+
+2. **Select Your Device**
+
+   - **For Physical Device:** If you enabled USB debugging in Step 2, your phone should appear in the device dropdown at the top
+   - **For Emulator:** Click the device dropdown → **Device Manager** → **Create Device** to set up an Android Virtual Device (AVD)
+   - Select your target device from the dropdown menu
+
+3. **Build and Run**
+
+   - Click the **Run 'app'** button (green play icon) in the toolbar, or press **Shift + F10**
+   - Android Studio will build the APK and install it on your device/emulator
+   - First build may take several minutes
+
+4. **Grant Permissions**
+
+   - When the app launches, grant camera permission when prompted
+   - The app requires camera access to capture sign language gestures
+
+5. **Troubleshooting**
+   - If your device doesn't appear, check USB debugging is enabled and cable is properly connected
+   - Try revoking USB debugging authorizations on your phone and reconnecting
+   - For emulator issues, ensure you have sufficient RAM and storage allocated in AVD settings
 
 ---
 
