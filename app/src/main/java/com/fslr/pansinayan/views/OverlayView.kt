@@ -28,8 +28,6 @@ class OverlayView @JvmOverloads constructor(
     private var imageWidth = 1
     private var imageHeight = 1
     private var scaleFactor = 1f
-    private var debugMode = false
-    private var isFrontCamera = true
     private var lastUpdateTime = 0L
     private var frameCount = 0
     
@@ -80,20 +78,6 @@ class OverlayView @JvmOverloads constructor(
         style = Paint.Style.STROKE
         isAntiAlias = true
     }
-    
-    // Paint for debug text
-    private val debugTextPaint = Paint().apply {
-        color = Color.WHITE
-        textSize = 24f
-        isAntiAlias = true
-        style = Paint.Style.FILL
-    }
-    
-    // Paint for debug background
-    private val debugBgPaint = Paint().apply {
-        color = Color.argb(180, 0, 0, 0)
-        style = Paint.Style.FILL
-    }
 
     fun setKeypoints(keypoints: FloatArray?, imageWidth: Int, imageHeight: Int) {
         this.keypoints = keypoints
@@ -105,8 +89,7 @@ class OverlayView @JvmOverloads constructor(
         frameCount++
         val currentTime = System.currentTimeMillis()
         if (currentTime - lastUpdateTime > 2000) {
-            val validPoints = keypoints?.let { countValidPoints(it) } ?: 0
-            Log.d(TAG, "Overlay: $frameCount frames, $validPoints keypoints")
+            Log.d(TAG, "Overlay: $frameCount frames")
             Log.d(TAG, "Dimensions: overlay=${width}x${height}, image=${imageWidth}x${imageHeight}, scale=%.2f".format(scaleFactor))
             lastUpdateTime = currentTime
             frameCount = 0
@@ -115,72 +98,20 @@ class OverlayView @JvmOverloads constructor(
         invalidate()
     }
     
-    /**
-     * Enable or disable debug mode.
-     */
     fun setDebugMode(enabled: Boolean) {
-        debugMode = enabled
-        invalidate()
-    }
-    
-    /**
-     * Count valid (non-zero) keypoints.
-     * New total: 89 points (25 pose + 21 left hand + 21 right hand + 22 face)
-     */
-    private fun countValidPoints(kp: FloatArray): Int {
-        var count = 0
-        for (i in 0 until minOf(89, kp.size / 2)) {
-            if (isValidPoint(kp[i * 2], kp[i * 2 + 1])) {
-                count++
-            }
-        }
-        return count
+        // Reserved for future use
     }
 
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
         
         val kp = keypoints
-        
-        // Draw debug info if no keypoints
-        if (kp == null || kp.size < 178) {
-            if (debugMode) {
-                drawDebugInfo(canvas, "No keypoints available", kp?.size ?: 0)
-            }
-            return
-        }
+        if (kp == null || kp.size < 178) return
 
         drawPoseSkeleton(canvas, kp)
-        drawHandSkeleton(canvas, kp, 50)  // Left hand starts at index 25 (50 values in)
-        drawHandSkeleton(canvas, kp, 92)  // Right hand starts at index 46 (92 values in)
-        drawFaceLandmarks(canvas, kp, 134) // Face starts at index 67 (134 values in)
-        
-        // Draw debug info if enabled
-        if (debugMode) {
-            val validPoints = countValidPoints(kp)
-            drawDebugInfo(canvas, "Valid keypoints: $validPoints / 89", kp.size)
-        }
-    }
-    
-    /**
-     * Draw debug information overlay.
-     * Positioned at bottom left, just above the skeleton toggle switch.
-     */
-    private fun drawDebugInfo(canvas: Canvas, message: String, keypointSize: Int) {
-        // Position at bottom left (just above skeleton toggle)
-        // Account for: stats card (~50dp), transcript card (~varies), skeleton toggle (~60dp), margins
-        val bottomMargin = 600f  // Space for stats, transcript, and skeleton toggle
-        val boxHeight = 90f
-        val boxTop = height - bottomMargin - boxHeight
-        val boxBottom = height - bottomMargin
-        val leftMargin = 48f  // Align with other components (16dp ≈ 48px)
-        
-        // Draw semi-transparent background
-        canvas.drawRect(leftMargin, boxTop, 520f, boxBottom, debugBgPaint)
-        
-        // Draw text
-        canvas.drawText(message, leftMargin + 12f, boxTop + 35f, debugTextPaint)
-        canvas.drawText("Keypoint array size: $keypointSize", leftMargin + 12f, boxTop + 65f, debugTextPaint)
+        drawHandSkeleton(canvas, kp, 50)
+        drawHandSkeleton(canvas, kp, 92)
+        drawFaceLandmarks(canvas, kp, 134)
     }
 
     /**

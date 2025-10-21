@@ -67,6 +67,9 @@ class MainActivity : AppCompatActivity() {
     private lateinit var confidenceTextView: TextView
     private lateinit var transcriptTextView: TextView
     private lateinit var statsTextView: TextView
+    private lateinit var debugInfoTextView: TextView
+    private lateinit var statsCard: View
+    private lateinit var debugInfoCard: View
     private lateinit var overlayView: OverlayView
     private lateinit var occlusionIndicator: View
     private lateinit var skeletonToggle: SwitchMaterial
@@ -74,6 +77,10 @@ class MainActivity : AppCompatActivity() {
     private lateinit var fabSwitchCamera: FloatingActionButton
     private lateinit var fabBack: FloatingActionButton
     private lateinit var radioModelSelection: RadioGroup
+    
+    private var debugModeEnabled = false
+    private var longPressStartTime = 0L
+    private val longPressThreshold = 500L
 
     // Recognition pipeline
     private lateinit var recognitionPipeline: RecognitionPipeline
@@ -153,6 +160,9 @@ class MainActivity : AppCompatActivity() {
         confidenceTextView = findViewById(R.id.confidence_text)
         transcriptTextView = findViewById(R.id.transcript_text)
         statsTextView = findViewById(R.id.stats_text)
+        debugInfoTextView = findViewById(R.id.debug_info_text)
+        statsCard = findViewById(R.id.stats_card)
+        debugInfoCard = findViewById(R.id.debug_info_card)
         overlayView = findViewById(R.id.overlay_view)
         occlusionIndicator = findViewById(R.id.occlusion_indicator)
         skeletonToggle = findViewById(R.id.toggle_skeleton)
@@ -202,11 +212,7 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    /**
-     * Set up UI component listeners.
-     */
     private fun setupUIListeners() {
-        // Skeleton toggle - enable by default
         skeletonToggle.isChecked = true
         overlayView.visibility = View.VISIBLE
         
@@ -215,12 +221,27 @@ class MainActivity : AppCompatActivity() {
             Log.i(TAG, "Skeleton overlay: ${if (isChecked) "visible" else "hidden"}")
         }
         
-        // Long press on skeleton toggle to enable debug mode
-        skeletonToggle.setOnLongClickListener {
-            overlayView.setDebugMode(true)
-            Toast.makeText(this, "Debug mode enabled", Toast.LENGTH_SHORT).show()
-            Log.i(TAG, "Debug mode enabled for overlay")
-            true
+        skeletonToggle.setOnTouchListener { _, event ->
+            when (event.action) {
+                android.view.MotionEvent.ACTION_DOWN -> {
+                    longPressStartTime = System.currentTimeMillis()
+                    false
+                }
+                android.view.MotionEvent.ACTION_UP -> {
+                    val pressDuration = System.currentTimeMillis() - longPressStartTime
+                    if (pressDuration >= longPressThreshold) {
+                        toggleDebugMode()
+                        true
+                    } else {
+                        false
+                    }
+                }
+                android.view.MotionEvent.ACTION_CANCEL -> {
+                    longPressStartTime = 0L
+                    false
+                }
+                else -> false
+            }
         }
 
         // Model selection
@@ -253,9 +274,17 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    /**
-     * Switch to a different model.
-     */
+    private fun toggleDebugMode() {
+        debugModeEnabled = !debugModeEnabled
+        statsCard.visibility = if (debugModeEnabled) View.VISIBLE else View.GONE
+        debugInfoCard.visibility = if (debugModeEnabled) View.VISIBLE else View.GONE
+        overlayView.setDebugMode(debugModeEnabled)
+        
+        val status = if (debugModeEnabled) "enabled" else "disabled"
+        Toast.makeText(this, "Debug mode $status", Toast.LENGTH_SHORT).show()
+        Log.i(TAG, "Debug mode $status")
+    }
+
     private fun switchModel(modelPath: String) {
         Toast.makeText(this, "Switching to $currentModel model...", Toast.LENGTH_SHORT).show()
         Log.i(TAG, "Switching model to: $modelPath")
@@ -407,13 +436,31 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    /**
-     * Handle frame updates (keypoints and occlusion status).
-     * Called on main thread.
-     */
     private fun handleFrameUpdate(keypoints: FloatArray?, imageWidth: Int, imageHeight: Int, isOccluded: Boolean) {
         overlayView.setKeypoints(keypoints, imageWidth, imageHeight)
         occlusionIndicator.setBackgroundColor(if (isOccluded) Color.RED else Color.GREEN)
+        
+        if (debugModeEnabled) {
+            updateDebugInfo(keypoints)
+        }
+    }
+    
+    private fun updateDebugInfo(keypoints: FloatArray?) {
+        val validCount = keypoints?.let { countValidKeypoints(it) } ?: 0
+        val arraySize = keypoints?.size ?: 0
+        debugInfoTextView.text = "Valid keypoints: $validCount/89\nKeypoint array size: $arraySize"
+    }
+    
+    private fun countValidKeypoints(kp: FloatArray): Int {
+        var count = 0
+        for (i in 0 until minOf(89, kp.size / 2)) {
+            val x = kp[i * 2]
+            val y = kp[i * 2 + 1]
+            if (!(x == 0f && y == 0f) && x in 0.0f..1.0f && y in 0.0f..1.0f) {
+                count++
+            }
+        }
+        return count
     }
 
     /**

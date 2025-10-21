@@ -81,6 +81,31 @@
         </LinearLayout>
     </androidx.cardview.widget.CardView>
 
+    <!-- Debug Info Card (Bottom Left, above skeleton toggle) -->
+    <androidx.cardview.widget.CardView
+        android:id="@+id/debug_info_card"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="16dp"
+        android:layout_marginBottom="8dp"
+        android:visibility="gone"
+        app:cardCornerRadius="8dp"
+        app:cardElevation="0dp"
+        app:cardBackgroundColor="#CC000000"
+        app:layout_constraintBottom_toTopOf="@id/toggle_skeleton"
+        app:layout_constraintStart_toStartOf="parent">
+
+        <TextView
+            android:id="@+id/debug_info_text"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:padding="8dp"
+            android:text="Valid keypoints: 0/89\nKeypoint array size: 0"
+            android:textSize="11sp"
+            android:textColor="@android:color/white"
+            android:fontFamily="monospace" />
+    </androidx.cardview.widget.CardView>
+
     <!-- Skeleton Toggle Switch (Bottom Left) -->
     <com.google.android.material.switchmaterial.SwitchMaterial
         android:id="@+id/toggle_skeleton"
@@ -211,6 +236,7 @@
         android:layout_width="0dp"
         android:layout_height="wrap_content"
         android:layout_margin="16dp"
+        android:visibility="gone"
         app:cardCornerRadius="8dp"
         app:cardElevation="0dp"
         app:cardBackgroundColor="#CC000000"
