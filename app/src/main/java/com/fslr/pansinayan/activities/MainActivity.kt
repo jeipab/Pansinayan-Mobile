@@ -421,10 +421,10 @@ class MainActivity : AppCompatActivity() {
      * Called on main thread.
      */
     private fun handleRecognizedSign(sign: RecognizedSign) {
-        Log.i(TAG, "Recognized: ${sign.label} (${sign.confidence})")
+        Log.i(TAG, "Recognized: ${sign.glossLabel} (${sign.categoryLabel}) - ${sign.confidence}")
 
-        // Update main result display
-        resultTextView.text = sign.label
+        // Update main result display with format: "GLOSS (CATEGORY)"
+        resultTextView.text = "${sign.glossLabel} (${sign.categoryLabel})"
         confidenceTextView.text = String.format("%.1f%%", sign.confidence * 100)
 
         // Update confidence color based on threshold
@@ -444,7 +444,7 @@ class MainActivity : AppCompatActivity() {
         // Update transcript display
         updateTranscriptDisplay()
 
-        // Save to database (will be implemented in next step)
+        // Save to database
         saveToDatabase(sign)
 
         // Optional: Trigger animation or sound
@@ -459,13 +459,13 @@ class MainActivity : AppCompatActivity() {
             try {
                 val history = RecognitionHistory(
                     timestamp = sign.timestamp,
-                    glossLabel = sign.label,
-                    categoryLabel = "Unknown", // TODO: Add category mapping
+                    glossLabel = sign.glossLabel,
+                    categoryLabel = sign.categoryLabel,
                     occlusionStatus = if (occlusionIndicator.solidColor == Color.RED) "Occluded" else "Not Occluded",
                     modelUsed = currentModel
                 )
                 database.historyDao().insert(history)
-                Log.d(TAG, "Saved to database: ${sign.label}")
+                Log.d(TAG, "Saved to database: ${sign.glossLabel} (${sign.categoryLabel})")
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to save to database", e)
             }
@@ -479,7 +479,7 @@ class MainActivity : AppCompatActivity() {
         val dateFormat = SimpleDateFormat("HH:mm:ss", Locale.getDefault())
         val transcriptText = transcript.joinToString("\n") { sign ->
             val time = dateFormat.format(Date(sign.timestamp))
-            "$time - ${sign.label} (${String.format("%.1f%%", sign.confidence * 100)})"
+            "$time - ${sign.glossLabel} (${sign.categoryLabel}) (${String.format("%.1f%%", sign.confidence * 100)})"
         }
         transcriptTextView.text = transcriptText
     }

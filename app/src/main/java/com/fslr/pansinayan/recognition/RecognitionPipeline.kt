@@ -201,10 +201,14 @@ class RecognitionPipeline(
 
         // If stable sign detected, emit to UI
         if (recognitionEvent != null) {
-            val label = labelMapper.getGlossLabel(recognitionEvent.glossId)
+            val glossLabel = labelMapper.getGlossLabel(recognitionEvent.glossId)
+            val categoryLabel = labelMapper.getCategoryLabel(inferenceResult.categoryPrediction)
+            
             val recognizedSign = RecognizedSign(
                 glossId = recognitionEvent.glossId,
-                label = label,
+                glossLabel = glossLabel,
+                categoryId = inferenceResult.categoryPrediction,
+                categoryLabel = categoryLabel,
                 confidence = recognitionEvent.confidence,
                 timestamp = recognitionEvent.timestamp
             )
@@ -214,7 +218,7 @@ class RecognitionPipeline(
                 onSignRecognized(recognizedSign)
             }
 
-            Log.i(TAG, "Sign recognized: $label (conf: ${recognitionEvent.confidence})")
+            Log.i(TAG, "Sign recognized: $glossLabel ($categoryLabel) - conf: ${recognitionEvent.confidence}")
         }
     }
 
@@ -494,7 +498,9 @@ class RecognitionPipeline(
  */
 data class RecognizedSign(
     val glossId: Int,
-    val label: String,
+    val glossLabel: String,
+    val categoryId: Int,
+    val categoryLabel: String,
     val confidence: Float,
     val timestamp: Long
 )
@@ -515,16 +521,21 @@ data class PipelineStats(
     val isRecording: Boolean
 ) {
     override fun toString(): String {
+        // Format stats in 2 columns for compact display
+        val col1Line1 = "Frames: $framesProcessed/$framesTotal"
+        val col2Line1 = "Inference: ${avgInferenceTimeMs}ms"
+        val col1Line2 = "Keypoints: $keypointSuccess/$keypointFailure"
+        val col2Line2 = "Buffer: $bufferSize"
+        val col1Line3 = "Temporal: $temporalStats"
+        val col2Line3 = "Recording: ${if (isRecording) "Yes" else "No"}"
+        val col1Line4 = "Last frame: ${timeSinceLastFrame}ms"
+        val col2Line4 = "Last KP: ${timeSinceLastKeypoint}ms"
+        
         return """
-            Pipeline Stats:
-            - Frames: $framesProcessed / $framesTotal
-            - Keypoints: $keypointSuccess success / $keypointFailure failures
-            - Inference: ${avgInferenceTimeMs}ms avg
-            - Buffer: $bufferSize frames
-            - Temporal: $temporalStats
-            - Last frame: ${timeSinceLastFrame}ms ago
-            - Last keypoint: ${timeSinceLastKeypoint}ms ago
-            - Recording: $isRecording
+            ${col1Line1.padEnd(28)} ${col2Line1}
+            ${col1Line2.padEnd(28)} ${col2Line2}
+            ${col1Line3.padEnd(28)} ${col2Line3}
+            ${col1Line4.padEnd(28)} ${col2Line4}
         """.trimIndent()
     }
 }

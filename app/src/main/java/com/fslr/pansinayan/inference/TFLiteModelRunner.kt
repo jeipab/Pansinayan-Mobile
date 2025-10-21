@@ -21,9 +21,15 @@ import kotlin.math.exp
  * - Post-process outputs (softmax, argmax, top-k)
  * 
  * Model Specs:
- * - Input: [1, T, 156] where T is sequence length
+ * - Input: [1, T, 178] where T is sequence length (89 keypoints × 2)
  * - Output 0: [1, 105] gloss logits
  * - Output 1: [1, 10] category logits
+ * 
+ * Keypoint Structure (89 keypoints total):
+ * - Pose: 25 points × 2 = 50 values [indices 0-49]
+ * - Left hand: 21 points × 2 = 42 values [indices 50-91]
+ * - Right hand: 21 points × 2 = 42 values [indices 92-133]
+ * - Face: 22 points × 2 = 44 values [indices 134-177]
  * 
  * Usage:
  *   val runner = TFLiteModelRunner(context)
@@ -36,7 +42,7 @@ class TFLiteModelRunner(
 ) {
     companion object {
         private const val TAG = "TFLiteModelRunner"
-        private const val INPUT_DIM = 156
+        private const val INPUT_DIM = 178  // 89 keypoints × 2 (was 156 for 78 keypoints)
         private const val OUTPUT_GLOSS_CLASSES = 105
         private const val OUTPUT_CATEGORY_CLASSES = 10
     }
@@ -109,7 +115,7 @@ class TFLiteModelRunner(
     /**
      * Run inference on a keypoint sequence.
      * 
-     * @param sequence Array of shape [T, 156] where T is sequence length
+     * @param sequence Array of shape [T, 178] where T is sequence length (89 keypoints × 2)
      * @return InferenceResult containing predictions and confidence scores
      */
     fun runInference(sequence: Array<FloatArray>): InferenceResult? {
@@ -121,7 +127,7 @@ class TFLiteModelRunner(
         try {
             val startTime = System.currentTimeMillis()
 
-            // Prepare input tensor [1, T, 156]
+            // Prepare input tensor [1, T, 178]
             val inputBuffer = prepareInputBuffer(sequence)
 
             // Prepare output tensors
@@ -178,7 +184,7 @@ class TFLiteModelRunner(
 
     /**
      * Prepare input buffer from sequence.
-     * Converts Array[T, 156] to ByteBuffer in format expected by TFLite.
+     * Converts Array[T, 178] to ByteBuffer in format expected by TFLite.
      */
     private fun prepareInputBuffer(sequence: Array<FloatArray>): ByteBuffer {
         val batchSize = 1
