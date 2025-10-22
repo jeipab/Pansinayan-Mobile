@@ -29,7 +29,6 @@ venv311/
 # Model Files (Large PyTorch checkpoints)
 models/checkpoints/
 *.pth
-*.pt
 *.pkl
 *.h5
 *.hdf5
