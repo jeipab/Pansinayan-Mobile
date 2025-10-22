@@ -11,6 +11,8 @@ import java.nio.MappedByteBuffer
 import java.nio.channels.FileChannel
 import kotlin.math.exp
 
+// Note: SignPrediction is in same package, but explicit reference for clarity
+
 /**
  * Runs TensorFlow Lite model inference for sign language recognition.
  * 
@@ -45,10 +47,14 @@ class TFLiteModelRunner(
         private const val INPUT_DIM = 178  // 89 keypoints × 2 (was 156 for 78 keypoints)
         private const val OUTPUT_GLOSS_CLASSES = 105
         private const val OUTPUT_CATEGORY_CLASSES = 10
+        private const val CTC_CLASSES = 106  // 105 glosses + 1 blank
     }
 
+    private enum class ModelType { CLASSIFICATION, CTC }
+    
     private var interpreter: Interpreter? = null
     private var gpuDelegate: GpuDelegate? = null
+    private var modelType: ModelType = ModelType.CLASSIFICATION
     
     // Performance metrics
     private var inferenceCount = 0
@@ -56,6 +62,7 @@ class TFLiteModelRunner(
 
     init {
         loadModel()
+        detectModelType()
     }
 
     /**
@@ -101,6 +108,23 @@ class TFLiteModelRunner(
     }
 
     /**
+     * Detect model type based on output tensor dimensions.
+     */
+    private fun detectModelType() {
+        val output1Shape = interpreter?.getOutputTensor(1)?.shape()
+        modelType = when {
+            output1Shape?.size == 3 -> {
+                Log.i(TAG, "Detected CTC model: category shape ${output1Shape.contentToString()}")
+                ModelType.CTC
+            }
+            else -> {
+                Log.i(TAG, "Detected Classification model: category shape ${output1Shape?.contentToString()}")
+                ModelType.CLASSIFICATION
+            }
+        }
+    }
+
+    /**
      * Load model file from assets as MappedByteBuffer.
      */
     private fun loadModelFile(): MappedByteBuffer {
@@ -119,6 +143,16 @@ class TFLiteModelRunner(
      * @return InferenceResult containing predictions and confidence scores
      */
     fun runInference(sequence: Array<FloatArray>): InferenceResult? {
+        return when (modelType) {
+            ModelType.CLASSIFICATION -> runClassificationInference(sequence)
+            ModelType.CTC -> runCTCInference(sequence)
+        }
+    }
+
+    /**
+     * Run classification inference (single prediction per sequence).
+     */
+    private fun runClassificationInference(sequence: Array<FloatArray>): InferenceResult? {
         val interpreter = interpreter ?: run {
             Log.e(TAG, "Interpreter not initialized")
             return null
@@ -177,7 +211,88 @@ class TFLiteModelRunner(
             )
 
         } catch (e: Exception) {
-            Log.e(TAG, "Inference failed", e)
+            Log.e(TAG, "Classification inference failed", e)
+            return null
+        }
+    }
+
+    /**
+     * Run CTC inference (multiple predictions per sequence).
+     */
+    private fun runCTCInference(sequence: Array<FloatArray>): InferenceResult? {
+        val interpreter = interpreter ?: run {
+            Log.e(TAG, "Interpreter not initialized")
+            return null
+        }
+
+        try {
+            val startTime = System.currentTimeMillis()
+            val T = sequence.size
+
+            // Prepare input tensor [1, T, 178]
+            val inputBuffer = prepareInputBuffer(sequence)
+
+            // Prepare 3D output tensors
+            val ctcLogProbs = Array(1) { Array(T) { FloatArray(CTC_CLASSES) } }
+            val categoryLogits = Array(1) { Array(T) { FloatArray(OUTPUT_CATEGORY_CLASSES) } }
+
+            // Run inference
+            val outputs = mapOf(
+                0 to ctcLogProbs,
+                1 to categoryLogits
+            )
+            interpreter.runForMultipleInputsOutputs(arrayOf(inputBuffer), outputs)
+
+            val inferenceTime = System.currentTimeMillis() - startTime
+
+            // Flatten outputs for decoder
+            val flatCtc = FloatArray(T * CTC_CLASSES)
+            val flatCat = FloatArray(T * OUTPUT_CATEGORY_CLASSES)
+            
+            for (t in 0 until T) {
+                for (c in 0 until CTC_CLASSES) {
+                    flatCtc[t * CTC_CLASSES + c] = ctcLogProbs[0][t][c]
+                }
+                for (c in 0 until OUTPUT_CATEGORY_CLASSES) {
+                    flatCat[t * OUTPUT_CATEGORY_CLASSES + c] = categoryLogits[0][t][c]
+                }
+            }
+
+            // Decode CTC predictions
+            val decoder = CTCDecoder()
+            val predictions = decoder.decode(flatCtc, flatCat, T)
+
+            // Update statistics
+            inferenceCount++
+            totalInferenceTimeMs += inferenceTime
+
+            if (inferenceCount % 10 == 0) {
+                val avgTime = totalInferenceTimeMs / inferenceCount
+                Log.d(TAG, "CTC Inference #$inferenceCount: ${inferenceTime}ms (avg: ${avgTime}ms)")
+            }
+
+            // Return result
+            return if (predictions.isNotEmpty()) {
+                InferenceResult(
+                    glossPrediction = predictions[0].glossId,
+                    glossConfidence = predictions[0].categoryConfidence,
+                    glossProbabilities = FloatArray(OUTPUT_GLOSS_CLASSES),
+                    glossTop5 = emptyList(),
+                    categoryPrediction = predictions[0].categoryId,
+                    categoryConfidence = predictions[0].categoryConfidence,
+                    categoryProbabilities = FloatArray(OUTPUT_CATEGORY_CLASSES),
+                    inferenceTimeMs = inferenceTime,
+                    sequenceLength = T,
+                    isCTC = true,
+                    ctcPredictions = predictions
+                )
+            } else {
+                Log.d(TAG, "No signs decoded from CTC output")
+                null
+            }
+
+        } catch (e: Exception) {
+            Log.e(TAG, "CTC inference failed", e)
             return null
         }
     }
@@ -235,53 +350,6 @@ class TFLiteModelRunner(
      */
     fun getAverageInferenceTime(): Long {
         return if (inferenceCount > 0) totalInferenceTimeMs / inferenceCount else 0
-    }
-}
-
-/**
- * Data class to hold inference results.
- */
-data class InferenceResult(
-    val glossPrediction: Int,
-    val glossConfidence: Float,
-    val glossProbabilities: FloatArray,
-    val glossTop5: List<Pair<Int, Float>>,
-    val categoryPrediction: Int,
-    val categoryConfidence: Float,
-    val categoryProbabilities: FloatArray,
-    val inferenceTimeMs: Long,
-    val sequenceLength: Int
-) {
-    override fun equals(other: Any?): Boolean {
-        if (this === other) return true
-        if (javaClass != other?.javaClass) return false
-
-        other as InferenceResult
-
-        if (glossPrediction != other.glossPrediction) return false
-        if (glossConfidence != other.glossConfidence) return false
-        if (!glossProbabilities.contentEquals(other.glossProbabilities)) return false
-        if (categoryPrediction != other.categoryPrediction) return false
-        if (categoryConfidence != other.categoryConfidence) return false
-        if (!categoryProbabilities.contentEquals(other.categoryProbabilities)) return false
-        if (inferenceTimeMs != other.inferenceTimeMs) return false
-
-        return true
-    }
-
-    override fun hashCode(): Int {
-        var result = glossPrediction
-        result = 31 * result + glossConfidence.hashCode()
-        result = 31 * result + glossProbabilities.contentHashCode()
-        result = 31 * result + categoryPrediction
-        result = 31 * result + categoryConfidence.hashCode()
-        result = 31 * result + categoryProbabilities.contentHashCode()
-        result = 31 * result + inferenceTimeMs.hashCode()
-        return result
-    }
-
-    override fun toString(): String {
-        return "InferenceResult(gloss=$glossPrediction, conf=${String.format("%.3f", glossConfidence)}, time=${inferenceTimeMs}ms)"
     }
 }
 

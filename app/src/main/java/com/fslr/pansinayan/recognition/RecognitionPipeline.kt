@@ -5,7 +5,9 @@ import android.util.Log
 import androidx.camera.core.ImageProxy
 import androidx.lifecycle.LifecycleOwner
 import com.fslr.pansinayan.camera.CameraManager
+import com.fslr.pansinayan.inference.InferenceResult
 import com.fslr.pansinayan.inference.SequenceBufferManager
+import com.fslr.pansinayan.inference.SignPrediction
 import com.fslr.pansinayan.inference.TFLiteModelRunner
 import com.fslr.pansinayan.mediapipe.MediaPipeProcessor
 import com.fslr.pansinayan.utils.LabelMapper
@@ -193,21 +195,59 @@ class RecognitionPipeline(
             return
         }
 
+        // Route to appropriate handler
+        if (inferenceResult.isCTC) {
+            processCTCPredictions(inferenceResult)
+        } else {
+            processClassificationPrediction(inferenceResult)
+        }
+    }
+
+    /**
+     * Process CTC predictions (multiple signs per window).
+     */
+    private suspend fun processCTCPredictions(result: InferenceResult) {
+        result.ctcPredictions?.forEach { prediction ->
+            val glossLabel = labelMapper.getGlossLabel(prediction.glossId)
+            val categoryLabel = labelMapper.getCategoryLabel(prediction.categoryId)
+            
+            val recognizedSign = RecognizedSign(
+                glossId = prediction.glossId,
+                glossLabel = glossLabel,
+                categoryId = prediction.categoryId,
+                categoryLabel = categoryLabel,
+                confidence = prediction.categoryConfidence,
+                timestamp = System.currentTimeMillis()
+            )
+
+            // Invoke callback on main thread
+            withContext(Dispatchers.Main) {
+                onSignRecognized(recognizedSign)
+            }
+
+            Log.i(TAG, "CTC sign: $glossLabel ($categoryLabel) - frames: ${prediction.startFrame}-${prediction.endFrame}")
+        }
+    }
+
+    /**
+     * Process classification prediction (single sign with temporal filtering).
+     */
+    private suspend fun processClassificationPrediction(result: InferenceResult) {
         // Process through temporal recognizer
         val recognitionEvent = temporalRecognizer.processNewPrediction(
-            glossId = inferenceResult.glossPrediction,
-            confidence = inferenceResult.glossConfidence
+            glossId = result.glossPrediction,
+            confidence = result.glossConfidence
         )
 
         // If stable sign detected, emit to UI
         if (recognitionEvent != null) {
             val glossLabel = labelMapper.getGlossLabel(recognitionEvent.glossId)
-            val categoryLabel = labelMapper.getCategoryLabel(inferenceResult.categoryPrediction)
+            val categoryLabel = labelMapper.getCategoryLabel(result.categoryPrediction)
             
             val recognizedSign = RecognizedSign(
                 glossId = recognitionEvent.glossId,
                 glossLabel = glossLabel,
-                categoryId = inferenceResult.categoryPrediction,
+                categoryId = result.categoryPrediction,
                 categoryLabel = categoryLabel,
                 confidence = recognitionEvent.confidence,
                 timestamp = recognitionEvent.timestamp
@@ -218,7 +258,7 @@ class RecognitionPipeline(
                 onSignRecognized(recognizedSign)
             }
 
-            Log.i(TAG, "Sign recognized: $glossLabel ($categoryLabel) - conf: ${recognitionEvent.confidence}")
+            Log.i(TAG, "Classification sign: $glossLabel ($categoryLabel) - conf: ${recognitionEvent.confidence}")
         }
     }
 
