@@ -86,7 +86,7 @@ class RecognitionPipeline(
 
             cameraManager = CameraManager(context, lifecycleOwner, previewView, targetFps = 30)
             mediaPipeProcessor = MediaPipeProcessor(context, this)
-            bufferManager = SequenceBufferManager(windowSize = 90, maxGap = 5)
+            bufferManager = SequenceBufferManager(windowSize = 150, maxGap = 5)  // Updated: 150 frames = 5 seconds at 30 FPS
             modelRunner = TFLiteModelRunner(context, modelPath = "sign_transformer_quant.tflite")
             temporalRecognizer = TemporalRecognizer(
                 stabilityThreshold = 5,

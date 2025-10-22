@@ -13,17 +13,17 @@ import java.util.*
  * - Prepare sequences for TFLite inference
  * 
  * Usage:
- *   val bufferManager = SequenceBufferManager(windowSize = 90)
+ *   val bufferManager = SequenceBufferManager(windowSize = 150)
  *   bufferManager.addFrame(keypoints)  // Add each new frame
  *   val sequence = bufferManager.getSequence()  // Get interpolated sequence
  */
 class SequenceBufferManager(
-    private val windowSize: Int = 90,  // 3 seconds at 30 FPS
+    private val windowSize: Int = 150,  // 5 seconds at 30 FPS (updated from 90/3s)
     private val maxGap: Int = 5  // Maximum gap for interpolation
 ) {
     companion object {
         private const val TAG = "SequenceBufferManager"
-        private const val MIN_SEQUENCE_LENGTH = 30  // Minimum 1 second of data
+        private const val MIN_SEQUENCE_LENGTH = 50  // Minimum 1.67 seconds of data (updated from 30)
     }
 
     // Circular buffer to store keypoint sequences
