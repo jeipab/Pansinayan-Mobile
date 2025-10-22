@@ -1,0 +1,14 @@
+{
+  "model_type": "gru",
+  "input_shape": [1, 150, 178],
+  "output_shapes": {
+    "gloss": [1, 105],
+    "category": [1, 10]
+  },
+  "quantization": "int8",
+  "training_config": {
+    "batch_size": 64,
+    "learning_rate": 0.001,
+    "epochs": 150
+  }
+}
