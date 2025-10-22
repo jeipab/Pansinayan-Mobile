@@ -148,6 +148,8 @@ Follow these steps to build and run the project on your local machine.
 
 Before building the app, export your trained PyTorch models to the TFLite format.
 
+#### Prerequisites
+
 Install Python dependencies:
 
 **Note:**
@@ -161,28 +163,67 @@ python3 -m venv venv
 source venv/bin/activate
 
 # Install dependencies
-pip install torch onnx onnx-tf tensorflow numpy pandas
+pip install -r scripts/requirements.txt
 ```
 
 **For other systems or if you prefer not to use a virtual environment:**
 
 ```bash
-pip install torch onnx onnx-tf tensorflow numpy pandas
+pip install -r scripts/requirements.txt
 ```
 
-Run the export script (this converts your models and generates `label_mapping.json`):
+#### Model Export Process
 
-```bash
-python android/model_export_and_setup.py --model both
-```
+1. **Place your PyTorch checkpoints** in the models directory:
 
-This will create a folder (e.g. `android/android_models/`) containing:
+   ```
+   models/checkpoints/transformer/best_model.pt
+   models/checkpoints/gru/best_model.pt
+   ```
 
-```
-sign_transformer_quant.tflite
-sign_mediapipe_gru_quant.tflite
-label_mapping.json
-```
+2. **Run the export script** from the scripts directory:
+
+   ```bash
+   cd scripts
+   python model_export_and_setup.py --model both
+   ```
+
+   **Available export options:**
+
+   - `--model transformer` - Export only Transformer model
+   - `--model mediapipe_gru` - Export only GRU model
+   - `--model both` - Export both models (recommended)
+   - `--checkpoint path/to/model.pt` - Use custom checkpoint path
+   - `--skip-quantization` - Skip quantized model generation
+
+3. **Generated files** will be created in `models/converted/`:
+   ```
+   models/converted/
+   ├── sign_transformer.onnx              # ONNX model (alternative runtime)
+   ├── sign_transformer.tflite            # Standard TFLite (~4-5 MB)
+   ├── sign_transformer_quant.tflite      # Quantized TFLite (~1-2 MB) ⭐ USE THIS
+   ├── sign_mediapipe_gru_quant.tflite    # GRU quantized model (~500 KB)
+   └── label_mapping.json                 # Gloss/category labels
+   ```
+
+#### What the Export Script Does
+
+The script performs a complete conversion pipeline:
+
+1. **Loads PyTorch model** from checkpoint (.pt file)
+2. **Exports to ONNX** format (portable, cross-platform)
+3. **Converts ONNX → TensorFlow** SavedModel (intermediate)
+4. **Converts TensorFlow → TFLite** (standard + quantized)
+5. **Validates accuracy** (compares PyTorch vs TFLite predictions)
+6. **Generates label mapping** JSON for Android
+7. **Creates model specifications** document
+
+#### Troubleshooting Model Export
+
+- **Import errors**: Ensure model classes (SignTransformer, MediaPipeGRU) are available in project root
+- **Checkpoint not found**: Place `.pt` files in `models/checkpoints/[model_type]/`
+- **Conversion fails**: Check ONNX and TensorFlow dependencies are installed
+- **Poor accuracy**: Verify model architecture matches training configuration
 
 ---
 
@@ -218,17 +259,22 @@ label_mapping.json
 
 ### Step 3: Copy Model Files
 
-Copy the three generated files from Step 1 into:
+Copy the generated files from Step 1 into the Android assets directory:
 
+```bash
+# Copy converted models to Android assets
+cp models/converted/*.tflite app/src/main/assets/
+cp models/converted/label_mapping.json app/src/main/assets/
 ```
-app/src/main/assets/
-```
 
-Files:
+**Required files:**
 
-- `sign_transformer_quant.tflite`
-- `sign_mediapipe_gru_quant.tflite`
+- `sign_transformer_quant.tflite` (or `sign_mediapipe_gru_quant.tflite`)
 - `label_mapping.json`
+
+**Optional files:**
+
+- `sign_transformer.onnx` (if using ONNX Runtime instead of TFLite)
 
 ---
 
