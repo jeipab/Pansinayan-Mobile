@@ -11,28 +11,123 @@ This project provides the complete, production-ready Android scaffolding code an
 
 ## 🚀 Features
 
-- **Live Recognition:** Uses CameraX for a high-performance, real-time camera feed.
-- **Dual-Model Support:** Allows real-time switching between a high-accuracy Transformer model and a lightweight GRU model.
-- **Advanced Keypoint Extraction:** Employs MediaPipe for robust extraction of 89 keypoints (25 pose + 21 left hand + 21 right hand + 22 face), totaling 178 data points.
-- **Skeleton Visualization:** Real-time skeleton overlay showing pose (green) and hand keypoints (yellow) for debugging and verification. Enabled by default with debug mode available via long-press.
-- **Occlusion Detection:** UI indicator shows when the user's hand blocks their face (which can affect accuracy).
-- **Persistent History:** All recognitions are saved to a local Room database for review.
-- **CSV Export:** Users can export their recognition history as a CSV file for analysis.
+- **Live Recognition:** Uses CameraX for a high-performance, real-time camera feed at 30 FPS.
+- **Dual Recognition Modes:**
+  - **Classification:** Isolated sign recognition (one sign per 5-second window)
+  - **CTC:** Continuous sign recognition (multiple signs per window, fluent signing)
+- **Dual-Model Support:** Real-time switching between Transformer (high accuracy) and GRU (lightweight) models.
+- **Advanced Keypoint Extraction:** MediaPipe extracts 89 keypoints (25 pose + 21 left hand + 21 right hand + 22 face) = 178 data points.
+- **Skeleton Visualization:** Real-time overlay showing pose (green) and hands (yellow). Toggle on/off, long-press for debug mode.
+- **Occlusion Detection:** UI indicator when hand blocks face (affects accuracy).
+- **Transcript Building:** Displays last 5 recognized signs with timestamps and confidence scores.
+- **Persistent History:** All recognitions saved to Room database for review.
+- **CSV Export:** Export recognition history for analysis.
 
 ---
 
 ## ⚙️ System Architecture
 
-The app’s recognition pipeline is designed for high performance and low latency:
+The app's recognition pipeline is designed for high performance and low latency:
 
 ```
-Camera (CameraX)
-   → MediaPipeProcessor (Extracts 178 keypoints)
-   → SequenceBufferManager (Builds 90-frame window)
+Camera (CameraX @ 30 FPS)
+   → MediaPipeProcessor (Extracts 89 keypoints × 2 = 178D)
+   → SequenceBufferManager (Builds 150-frame sliding window = 5 seconds)
    → TFLiteModelRunner (Runs Transformer/GRU model)
-   → TemporalRecognizer (Filters results)
-   → UI Update
+   → Classification: TemporalRecognizer (Filters results) → Single sign
+   → CTC: CTCDecoder (Segments sequence) → Multiple signs
+   → UI Update (Transcript building)
 ```
+
+**Dual Recognition Modes:**
+
+- **Classification:** Predicts one sign per 5-second window (isolated signs with pauses)
+- **CTC:** Predicts multiple signs per window (continuous fluent signing)
+
+---
+
+## 🧩 Core Components
+
+### **1. Camera & Input Processing**
+
+- **CameraManager** (`camera/CameraManager.kt`) - CameraX setup, 30 FPS capture, front/back switching
+- **MediaPipeProcessor** (`mediapipe/MediaPipeProcessor.kt`) - Extracts 89 keypoints:
+  - 25 pose points (body, shoulders, arms)
+  - 21 left hand points
+  - 21 right hand points
+  - 22 face points (lips, eyes, eyebrows)
+- **OverlayView** (`views/OverlayView.kt`) - Real-time skeleton visualization
+
+### **2. Sequence Management**
+
+- **SequenceBufferManager** (`inference/SequenceBufferManager.kt`) - Sliding window buffer:
+  - Window: 150 frames (5 seconds at 30 FPS)
+  - Gap interpolation for missing frames
+  - Minimum 50 frames before inference
+
+### **3. Model Inference**
+
+- **TFLiteModelRunner** (`inference/TFLiteModelRunner.kt`) - TFLite inference engine:
+  - Auto-detects model type (Classification vs CTC)
+  - Input: `[1, 150, 178]` (batch, time, features)
+  - Classification output: `[1, 105]` gloss + `[1, 10]` category
+  - CTC output: `[1, 150, 106]` gloss + `[1, 150, 10]` category (per-frame)
+  - GPU acceleration with fallback to CPU
+- **CTCDecoder** (`inference/CTCDecoder.kt`) - CTC greedy decoder:
+  - Collapses repeated predictions
+  - Removes blank tokens (ID 105)
+  - Assigns categories via frame distribution + majority voting
+
+### **4. Recognition Logic**
+
+- **RecognitionPipeline** (`recognition/RecognitionPipeline.kt`) - Orchestrates entire flow:
+  - Runs inference every 10 frames (~0.33s intervals)
+  - Routes to Classification or CTC handler
+  - Health monitoring with auto-recovery
+  - Thread-safe coroutine-based processing
+- **TemporalRecognizer** (`recognition/TemporalRecognizer.kt`) - Classification smoothing:
+  - Requires 5 consecutive same predictions
+  - Confidence threshold: 60%
+  - Cooldown: 1000ms between emissions
+  - Filters noise and jitter
+
+### **5. UI & Data Persistence**
+
+- **MainActivity** (`activities/MainActivity.kt`) - Main recognition screen:
+  - Live camera preview
+  - Real-time prediction display
+  - Transcript (last 5 signs)
+  - Model switching (Transformer/GRU)
+  - Screen recording integration
+- **HistoryActivity** (`activities/HistoryActivity.kt`) - Recognition history with CSV export
+- **AppDatabase** (`database/AppDatabase.kt`) - Room database for persistence
+- **LabelMapper** (`utils/LabelMapper.kt`) - Maps IDs to human-readable labels
+
+---
+
+## 📊 Model Specifications
+
+### Input
+
+- **Shape:** `[1, 150, 178]`
+- **Type:** Float32
+- **Content:** 150 frames of 89 keypoints (x, y coordinates)
+
+### Output (Classification)
+
+- **Gloss:** `[1, 105]` - One of 105 FSL signs
+- **Category:** `[1, 10]` - One of 10 semantic categories
+
+### Output (CTC)
+
+- **Gloss:** `[1, 150, 106]` - Per-frame predictions (105 signs + 1 blank)
+- **Category:** `[1, 150, 10]` - Per-frame category predictions
+
+### Supported Models
+
+- **Transformer:** High accuracy, ~60-70ms inference
+- **MediaPipe-GRU:** Lightweight, ~40-50ms inference
+- Both support Classification and CTC modes (auto-detected)
 
 ---
 
@@ -192,8 +287,6 @@ The skeleton overlay helps you visualize keypoints in real-time:
    - **Green**: Body pose keypoints (face, shoulders, arms, torso)
    - **Yellow**: Hand keypoints (21 points per hand)
 
-For detailed information, see [SKELETON_OVERLAY_GUIDE.md](SKELETON_OVERLAY_GUIDE.md).
-
 ---
 
 ## 🧱 Project Structure
@@ -204,16 +297,18 @@ For detailed information, see [SKELETON_OVERLAY_GUIDE.md](SKELETON_OVERLAY_GUIDE
 │   ├── src/
 │   │   ├── main/
 │   │   │   ├── java/com/fslr/pansinayan/
-│   │   │   │   ├── activities/        # Home, Main, and History screens
+│   │   │   │   ├── activities/        # MainActivity, HistoryActivity, HomeActivity
 │   │   │   │   ├── adapter/           # RecyclerView adapter for history
-│   │   │   │   ├── camera/            # CameraX setup and management
-│   │   │   │   ├── database/          # Room database for recognition history
-│   │   │   │   ├── inference/         # TFLiteModelRunner and SequenceBufferManager
-│   │   │   │   ├── mediapipe/         # MediaPipeProcessor for keypoint extraction
-│   │   │   │   ├── recognition/       # Core pipeline and temporal logic
-│   │   │   │   ├── utils/             # LabelMapper and ModelSelector
-│   │   │   │   ├── views/             # OverlayView for skeleton drawing
-│   │   │   │   └── res/               # Layouts, drawables, and values
+│   │   │   │   ├── camera/            # CameraManager (CameraX setup)
+│   │   │   │   ├── database/          # Room database (AppDatabase, HistoryDao)
+│   │   │   │   ├── inference/         # TFLiteModelRunner, CTCDecoder, SequenceBufferManager
+│   │   │   │   ├── mediapipe/         # MediaPipeProcessor (keypoint extraction)
+│   │   │   │   ├── recognition/       # RecognitionPipeline, TemporalRecognizer
+│   │   │   │   ├── services/          # ScreenRecordService (video recording)
+│   │   │   │   ├── utils/             # LabelMapper, ModelSelector
+│   │   │   │   ├── views/             # OverlayView (skeleton visualization)
+│   │   │   │   └── res/               # Layouts, drawables, values
+│   │   │   └── assets/                # TFLite models, MediaPipe tasks, label mappings
 │   │   └── ...
 │   ├── build.gradle
 │   └── ...
