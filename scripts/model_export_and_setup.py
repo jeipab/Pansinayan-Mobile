@@ -159,62 +159,176 @@ def print_step(step_num, title):
 
 
 def export_to_onnx(model, output_path, seq_len=90, is_ctc=False):
-    """Export PyTorch model to ONNX."""
+    """Export PyTorch model to ONNX with validation."""
     print_step("1/5", "Exporting PyTorch → ONNX")
     
     model.eval()
     dummy_input = torch.randn(1, seq_len, 178)
     
-    if is_ctc:
-        # CTC models output [B, T, num_ctc_classes] + [B, T, num_cat]
-        torch.onnx.export(
-            model,
-            dummy_input,
-            output_path,
-            export_params=True,
-            opset_version=18,
-            do_constant_folding=True,
-            input_names=['input_sequence'],
-            output_names=['ctc_logits', 'category_logits'],
-            verbose=False
-        )
-    else:
-        # Classification models output [B, num_gloss] + [B, num_cat]
-        torch.onnx.export(
-            model,
-            (dummy_input, None),
-            output_path,
-            export_params=True,
-            opset_version=12,
-            do_constant_folding=True,
-            input_names=['input_sequence'],
-            output_names=['gloss_logits', 'category_logits'],
-            dynamic_axes={
-                'input_sequence': {0: 'batch_size', 1: 'seq_len'},
-                'gloss_logits': {0: 'batch_size'},
-                'category_logits': {0: 'batch_size'}
-            },
-            verbose=False
-        )
-    
-    print(f"✓ ONNX model saved: {output_path}")
+    try:
+        if is_ctc:
+            # CTC models output [B, T, num_ctc_classes] + [B, T, num_cat]
+            torch.onnx.export(
+                model,
+                dummy_input,
+                output_path,
+                export_params=True,
+                opset_version=13,  # Use stable opset version
+                do_constant_folding=True,
+                input_names=['input'],
+                output_names=['output'],
+                dynamic_axes={
+                    'input': {0: 'batch_size', 1: 'seq_len'},
+                    'output': {0: 'batch_size', 1: 'seq_len'}
+                },
+                verbose=False
+            )
+        else:
+            # Classification models output [B, num_gloss] + [B, num_cat]
+            torch.onnx.export(
+                model,
+                (dummy_input, None),
+                output_path,
+                export_params=True,
+                opset_version=13,  # Use stable opset version
+                do_constant_folding=True,
+                input_names=['input_sequence'],
+                output_names=['gloss_logits', 'category_logits'],
+                dynamic_axes={
+                    'input_sequence': {0: 'batch_size', 1: 'seq_len'},
+                    'gloss_logits': {0: 'batch_size'},
+                    'category_logits': {0: 'batch_size'}
+                },
+                verbose=False
+            )
+        
+        # Validate ONNX model
+        validate_onnx_model(output_path, dummy_input.numpy())
+        
+        print(f"✓ ONNX model saved: {output_path}")
+        return True
+        
+    except Exception as e:
+        error_msg = str(e)
+        print(f"❌ ONNX export failed: {error_msg}")
+        log_export_error("ONNX export failed", error_msg)
+        return False
+
+
+def validate_onnx_model(onnx_path, test_input):
+    """Validate ONNX model and check for common issues."""
+    try:
+        import onnx
+        
+        # Load and check model
+        onnx_model = onnx.load(onnx_path)
+        onnx.checker.check_model(onnx_model)
+        
+        print("✓ ONNX model validation passed")
+        
+        # Test inference
+        import onnxruntime as ort
+        session = ort.InferenceSession(onnx_path)
+        
+        # Run inference
+        outputs = session.run(None, {"input": test_input})
+        
+        print(f"✓ ONNX inference test passed (output shapes: {[o.shape for o in outputs]})")
+        
+    except Exception as e:
+        print(f"⚠️  ONNX validation warning: {e}")
+        log_export_error("ONNX validation failed", str(e))
 
 
 def convert_to_tensorflow(onnx_path, tf_path):
-    """Convert ONNX to TensorFlow SavedModel - SKIP for now, use ONNX Runtime instead."""
-    print_step("2/5", "Skipping ONNX → TensorFlow conversion")
+    """Convert ONNX to TensorFlow SavedModel with robust fallback options."""
+    print_step("2/5", "Converting ONNX → TensorFlow")
     
-    print("⚠️  TensorFlow conversion skipped due to tf2onnx compatibility issues")
+    # Try multiple conversion methods in order of preference
+    conversion_methods = [
+        ("tf2onnx", convert_with_tf2onnx),
+        ("onnx2tf", convert_with_onnx2tf),
+        ("onnx-tf", convert_with_onnx_tf)
+    ]
+    
+    for method_name, convert_func in conversion_methods:
+        try:
+            print(f"   Trying {method_name}...")
+            success = convert_func(onnx_path, tf_path)
+            if success:
+                print(f"✓ Successfully converted using {method_name}")
+                return True
+        except Exception as e:
+            print(f"   {method_name} failed: {e}")
+            log_export_error(f"{method_name} conversion failed", str(e))
+            continue
+    
+    print("❌ All ONNX → TensorFlow conversion methods failed")
     print("   RECOMMENDED: Use ONNX Runtime for Android instead")
     print("   Add to build.gradle:")
-    print("   implementation 'com.microsoft.onnxruntime:onnxruntime-android:1.16.0'")
+    print("   implementation 'com.microsoft.onnxruntime:onnxruntime-android:1.18.0'")
     print(f"\n   Your ONNX model is ready: {onnx_path}")
     
     return False
 
 
+def convert_with_tf2onnx(onnx_path, tf_path):
+    """Convert using tf2onnx (preferred method)."""
+    import tf2onnx
+    import subprocess
+    
+    # Use tf2onnx command line tool
+    cmd = [
+        "python", "-m", "tf2onnx.convert",
+        "--opset", "13",
+        "--fold_const",
+        "--saved-model", tf_path,
+        "--onnx", onnx_path
+    ]
+    
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    if result.returncode == 0:
+        return True
+    else:
+        raise Exception(f"tf2onnx failed: {result.stderr}")
+
+
+def convert_with_onnx2tf(onnx_path, tf_path):
+    """Convert using onnx2tf (alternative method)."""
+    try:
+        import onnx2tf
+        onnx2tf.convert(
+            input_onnx_file_path=onnx_path,
+            output_folder_path=tf_path,
+            copy_onnx_input_output_names_to_tflite=True
+        )
+        return True
+    except ImportError:
+        raise Exception("onnx2tf not installed. Install with: pip install onnx2tf")
+
+
+def convert_with_onnx_tf(onnx_path, tf_path):
+    """Convert using onnx-tf (fallback method)."""
+    try:
+        import onnx_tf
+        onnx_model = onnx_tf.backend.prepare(onnx_tf.convert_from_onnx(onnx_path))
+        onnx_model.export_graph(tf_path)
+        return True
+    except ImportError:
+        raise Exception("onnx-tf not installed. Install with: pip install onnx-tf")
+
+
+def log_export_error(stage, error_msg):
+    """Log export errors to file for debugging."""
+    import datetime
+    log_file = "export_errors.log"
+    
+    with open(log_file, "a") as f:
+        f.write(f"\n[{datetime.datetime.now()}] {stage}: {error_msg}\n")
+
+
 def convert_to_tflite(tf_path, tflite_path, quantize=False):
-    """Convert TensorFlow to TFLite."""
+    """Convert TensorFlow to TFLite with robust error handling."""
     step_name = "3/5" if not quantize else "4/5"
     model_type = "Quantized" if quantize else "Standard"
     print_step(step_name, f"Converting TensorFlow → TFLite ({model_type})")
@@ -223,9 +337,19 @@ def convert_to_tflite(tf_path, tflite_path, quantize=False):
         import tensorflow as tf
         
         converter = tf.lite.TFLiteConverter.from_saved_model(tf_path)
+        converter.experimental_new_converter = True
         
         if quantize:
+            # Try dynamic range quantization first
             converter.optimizations = [tf.lite.Optimize.DEFAULT]
+            
+            # If that works, try full integer quantization
+            try:
+                converter.target_spec.supported_ops = [tf.lite.OpsSet.TFLITE_BUILTINS_INT8]
+                converter.inference_input_type = tf.float32
+                converter.inference_output_type = tf.float32
+            except Exception as e:
+                print(f"   Full int quantization not supported, using dynamic range: {e}")
         
         tflite_model = converter.convert()
         
@@ -237,7 +361,17 @@ def convert_to_tflite(tf_path, tflite_path, quantize=False):
         return True
         
     except Exception as e:
-        print(f"❌ TFLite conversion failed: {e}")
+        error_msg = str(e)
+        print(f"❌ TFLite conversion failed: {error_msg}")
+        log_export_error("TFLite conversion failed", error_msg)
+        
+        # Check for specific error types and provide suggestions
+        if "unsupported" in error_msg.lower():
+            print("   💡 Suggestion: Try using ONNX Runtime instead")
+            print("   Add to build.gradle: implementation 'com.microsoft.onnxruntime:onnxruntime-android:1.18.0'")
+        elif "quantization" in error_msg.lower():
+            print("   💡 Suggestion: Try without quantization first")
+        
         return False
 
 
@@ -791,7 +925,10 @@ def export_single_model(model_type, checkpoint_path, output_dir, seq_len, skip_q
     print(f"   Estimated size: {total_params * 4 / (1024 * 1024):.2f} MB (float32)")
     
     # Step 1: Export to ONNX
-    export_to_onnx(model, onnx_path, seq_len, is_ctc)
+    success = export_to_onnx(model, onnx_path, seq_len, is_ctc)
+    if not success:
+        print(f"❌ ONNX export failed for {model_name}")
+        return False
     
     # Step 2: Convert to TensorFlow (skip if not available)
     success = convert_to_tensorflow(onnx_path, tf_path)
@@ -859,7 +996,33 @@ def export_single_model(model_type, checkpoint_path, output_dir, seq_len, skip_q
     print(f"\n✅ {model_name} export complete!")
     print(f"   Models saved with prefix: {model_prefix}")
     
+    # Show export summary
+    print_export_summary(output_dir, model_prefix)
+    
     return True
+
+
+def print_export_summary(output_dir, model_prefix):
+    """Print summary of exported files and recommendations."""
+    print_header("📋 Export Summary")
+    
+    files_created = []
+    for filename in os.listdir(output_dir):
+        if filename.startswith(model_prefix):
+            filepath = os.path.join(output_dir, filename)
+            size_mb = os.path.getsize(filepath) / (1024 * 1024)
+            files_created.append(f"   {filename:40s} {size_mb:6.2f} MB")
+    
+    if files_created:
+        print("📁 Files created:")
+        for file_info in sorted(files_created):
+            print(file_info)
+    
+    print("\n💡 Recommendations:")
+    print("   1. Use ONNX Runtime for Android (most reliable)")
+    print("   2. If TFLite conversion failed, check export_errors.log")
+    print("   3. Test models with sample data before deployment")
+    print("   4. Consider quantization for smaller model size")
 
 
 def main():
