@@ -111,7 +111,7 @@ MEDIAPIPE_GRU_CONFIG = {
 # Export configuration
 EXPORT_CONFIG = {
     'seq_len': 150,        # Sequence length for export (5 seconds at 30 FPS)
-    'opset_version': 12,   # ONNX opset version
+    'opset_version': 18,   # ONNX opset version (updated for compatibility)
     'quantize': True,      # Create quantized version
 }
 
@@ -120,29 +120,29 @@ TRANSFORMER_CTC_CONFIG = {
     'emb_dim': 256,
     'n_heads': 8,
     'n_layers': 4,
-    'num_ctc_classes': 106,
-    'num_cat': 10,
+    'num_ctc_classes': 11,  # 10 greeting signs + 1 blank token
+    'num_cat': 1,           # Only 1 category (greetings)
     'dropout': 0.0,
 }
 
 MEDIAPIPE_GRU_CTC_CONFIG = {
     'input_dim': 178,
     'projection_dim': None,
-    'hidden1': 256,
-    'hidden2': 128,
-    'num_ctc_classes': 106,
-    'num_cat': 10,
+    'hidden1': 30,           # Actual trained model dimensions
+    'hidden2': 22,           # Actual trained model dimensions  
+    'num_ctc_classes': 11,  # 10 greeting signs + 1 blank token
+    'num_cat': 1,           # Only 1 category (greetings)
     'dropout': 0.3,
 }
 
 # Paths
 DEFAULT_CHECKPOINTS = {
-    'transformer': '../models/checkpoints/transformer/best_model.pt',
-    'mediapipe_gru': '../models/checkpoints/gru/best_model.pt',
-    'transformer_ctc': '../models/checkpoints/transformer/best_model.pt',
-    'mediapipe_gru_ctc': '../models/checkpoints/gru/best_model.pt',
+    'transformer': 'models/checkpoints/transformer/SignTransformerCtc_best.pt',
+    'mediapipe_gru': 'models/checkpoints/gru/MediaPipeGRUCtc_best.pt',
+    'transformer_ctc': 'models/checkpoints/transformer/SignTransformerCtc_best.pt',
+    'mediapipe_gru_ctc': 'models/checkpoints/gru/MediaPipeGRUCtc_best.pt',
 }
-OUTPUT_DIR = '../models/converted'
+OUTPUT_DIR = 'models/converted'
 
 
 def print_header(title):
@@ -172,15 +172,10 @@ def export_to_onnx(model, output_path, seq_len=90, is_ctc=False):
             dummy_input,
             output_path,
             export_params=True,
-            opset_version=12,
+            opset_version=18,
             do_constant_folding=True,
             input_names=['input_sequence'],
             output_names=['ctc_logits', 'category_logits'],
-            dynamic_axes={
-                'input_sequence': {0: 'batch_size', 1: 'seq_len'},
-                'ctc_logits': {0: 'batch_size', 1: 'seq_len'},
-                'category_logits': {0: 'batch_size', 1: 'seq_len'}
-            },
             verbose=False
         )
     else:
@@ -206,28 +201,16 @@ def export_to_onnx(model, output_path, seq_len=90, is_ctc=False):
 
 
 def convert_to_tensorflow(onnx_path, tf_path):
-    """Convert ONNX to TensorFlow SavedModel."""
-    print_step("2/5", "Converting ONNX → TensorFlow")
+    """Convert ONNX to TensorFlow SavedModel - SKIP for now, use ONNX Runtime instead."""
+    print_step("2/5", "Skipping ONNX → TensorFlow conversion")
     
-    try:
-        import onnx
-        from onnx_tf.backend import prepare
-        
-        onnx_model = onnx.load(onnx_path)
-        tf_rep = prepare(onnx_model)
-        tf_rep.export_graph(tf_path)
-        
-        print(f"✓ TensorFlow SavedModel saved: {tf_path}/")
-        return True
-        
-    except ImportError:
-        print("❌ onnx-tf not installed")
-        print("   Install with: pip install onnx-tf")
-        print("\n   Alternative: Use ONNX Runtime for Android instead")
-        return False
-    except Exception as e:
-        print(f"❌ Conversion failed: {e}")
-        return False
+    print("⚠️  TensorFlow conversion skipped due to tf2onnx compatibility issues")
+    print("   RECOMMENDED: Use ONNX Runtime for Android instead")
+    print("   Add to build.gradle:")
+    print("   implementation 'com.microsoft.onnxruntime:onnxruntime-android:1.16.0'")
+    print(f"\n   Your ONNX model is ready: {onnx_path}")
+    
+    return False
 
 
 def convert_to_tflite(tf_path, tflite_path, quantize=False):
@@ -391,10 +374,14 @@ def generate_label_mapping(output_path):
                 if cat_id not in category_mapping:
                     category_mapping[cat_id] = str(row['category'])
         else:
-            print(f"⚠️  CSV not found at {csv_path}, creating basic mapping")
-            # Create basic mapping for 105 glosses and 10 categories
-            gloss_mapping = {i: f"sign_{i:03d}" for i in range(105)}
-            category_mapping = {i: f"category_{i}" for i in range(10)}
+            print(f"⚠️  CSV not found at {csv_path}, creating greeting-only mapping")
+            # Create greeting mapping for 10 greeting signs and 1 category
+            greeting_signs = [
+                "GOOD MORNING", "GOOD AFTERNOON", "GOOD EVENING", "HELLO", "HOW ARE YOU",
+                "IM FINE", "NICE TO MEET YOU", "THANK YOU", "YOURE WELCOME", "SEE YOU TOMORROW"
+            ]
+            gloss_mapping = {i: greeting_signs[i] for i in range(10)}
+            category_mapping = {0: "GREETING"}
         
         # Save JSON with metadata
         label_data = {
@@ -806,16 +793,47 @@ def export_single_model(model_type, checkpoint_path, output_dir, seq_len, skip_q
     # Step 1: Export to ONNX
     export_to_onnx(model, onnx_path, seq_len, is_ctc)
     
-    # Step 2: Convert to TensorFlow
+    # Step 2: Convert to TensorFlow (skip if not available)
     success = convert_to_tensorflow(onnx_path, tf_path)
     if not success:
-        print(f"\n⚠️  Could not complete conversion to TFLite for {model_name}")
-        print("   ALTERNATIVE OPTIONS:")
-        print("   1. Use ONNX Runtime for Android:")
-        print("      implementation 'com.microsoft.onnxruntime:onnxruntime-android:1.16.0'")
-        print("   2. Use PyTorch Mobile (.ptl format)")
-        print(f"\n   The ONNX model was generated successfully: {onnx_path}")
-        return False
+        print(f"\n⚠️  Skipping TensorFlow conversion for {model_name}")
+        print("   ONNX model is ready for Android deployment!")
+        print(f"   Model file: {onnx_path}")
+        
+        # Still generate label mapping and specs
+        print_header("📝 Using Greeting Label Mapping")
+        
+        # Use the existing greeting label mapping
+        greeting_label_path = os.path.join(output_dir, "greeting_label_mapping.json")
+        label_json_path = os.path.join(output_dir, "label_mapping.json")
+        
+        if os.path.exists(greeting_label_path):
+            # Copy greeting mapping to main label mapping
+            import shutil
+            shutil.copy2(greeting_label_path, label_json_path)
+            print(f"✓ Using greeting label mapping: {greeting_label_path}")
+        else:
+            # Fallback to generating new one
+            generate_label_mapping(label_json_path)
+        
+        # Generate specs for ONNX model
+        file_sizes = f"{os.path.basename(onnx_path):40s} {os.path.getsize(onnx_path) / (1024 * 1024):6.2f} MB"
+        specs_path = os.path.join(output_dir, f"{model_prefix}_ONNX_SPECS.txt")
+        
+        # Add missing parameters for CTC models
+        if 'pooling_method' not in model_config:
+            model_config['pooling_method'] = 'none'  # CTC models don't use pooling
+        if 'num_gloss' not in model_config:
+            model_config['num_gloss'] = model_config.get('num_ctc_classes', 11) - 1  # CTC classes - blank token
+            
+        generate_model_specs(specs_path, model_config, EXPORT_CONFIG, file_sizes)
+        
+        print(f"\n✅ {model_name} ONNX export complete!")
+        print(f"   ONNX model: {onnx_path}")
+        print(f"   Label mapping: {label_json_path}")
+        print(f"   Specifications: {specs_path}")
+        
+        return True
     
     # Step 3: Convert to TFLite (standard)
     success = convert_to_tflite(tf_path, tflite_path, quantize=False)
