@@ -8,6 +8,7 @@ import com.fslr.pansinayan.camera.CameraManager
 import com.fslr.pansinayan.inference.InferenceResult
 import com.fslr.pansinayan.inference.SequenceBufferManager
 import com.fslr.pansinayan.inference.SignPrediction
+import com.fslr.pansinayan.inference.ONNXModelRunner
 import com.fslr.pansinayan.inference.TFLiteModelRunner
 import com.fslr.pansinayan.mediapipe.MediaPipeProcessor
 import com.fslr.pansinayan.utils.LabelMapper
@@ -57,7 +58,7 @@ class RecognitionPipeline(
     private lateinit var cameraManager: CameraManager
     private lateinit var mediaPipeProcessor: MediaPipeProcessor
     private lateinit var bufferManager: SequenceBufferManager
-    private lateinit var modelRunner: TFLiteModelRunner
+    private lateinit var modelRunner: Any // Can be ONNXModelRunner or TFLiteModelRunner
     private lateinit var temporalRecognizer: TemporalRecognizer
     private lateinit var labelMapper: LabelMapper
 
@@ -89,7 +90,16 @@ class RecognitionPipeline(
             cameraManager = CameraManager(context, lifecycleOwner, previewView, targetFps = 30)
             mediaPipeProcessor = MediaPipeProcessor(context, this)
             bufferManager = SequenceBufferManager(windowSize = 150, maxGap = 5)  // Updated: 150 frames = 5 seconds at 30 FPS
-            modelRunner = TFLiteModelRunner(context, modelPath = "sign_transformer_quant.tflite")
+            
+            // Try ONNX first, fallback to TFLite if it fails
+            modelRunner = try {
+                Log.i(TAG, "Attempting to initialize ONNX model...")
+                ONNXModelRunner(context, modelName = "sign_transformer_ctc.onnx")
+            } catch (e: Exception) {
+                Log.w(TAG, "ONNX model failed to load, falling back to TFLite: ${e.message}")
+                TFLiteModelRunner(context, modelPath = "sign_transformer_quant.tflite")
+            }
+            
             temporalRecognizer = TemporalRecognizer(
                 stabilityThreshold = 5,
                 confidenceThreshold = 0.6f,
@@ -189,8 +199,16 @@ class RecognitionPipeline(
             return
         }
 
-        // Run TFLite inference
-        val inferenceResult = modelRunner.runInference(sequence) ?: run {
+        // Run inference with appropriate model runner
+        val currentModelRunner = modelRunner
+        val inferenceResult = when (currentModelRunner) {
+            is ONNXModelRunner -> currentModelRunner.runInference(sequence)
+            is TFLiteModelRunner -> currentModelRunner.runInference(sequence)
+            else -> {
+                Log.e(TAG, "Unknown model runner type")
+                return
+            }
+        } ?: run {
             Log.w(TAG, "Inference failed")
             return
         }
@@ -426,7 +444,10 @@ class RecognitionPipeline(
         
         cameraManager.release()
         mediaPipeProcessor.release()
-        modelRunner.release()
+        when (val currentModelRunner = modelRunner) {
+            is ONNXModelRunner -> currentModelRunner.release()
+            is TFLiteModelRunner -> currentModelRunner.release()
+        }
         
         Log.i(TAG, "All resources released")
     }
@@ -437,7 +458,11 @@ class RecognitionPipeline(
     fun getStats(): PipelineStats {
         val (cameraProcessed, cameraTotal) = cameraManager.getStats()
         val (mediapipeSuccess, mediapipeFailure) = mediaPipeProcessor.getStats()
-        val avgInferenceTime = modelRunner.getAverageInferenceTime()
+        val avgInferenceTime = when (val currentModelRunner = modelRunner) {
+            is ONNXModelRunner -> currentModelRunner.getAverageInferenceTime()
+            is TFLiteModelRunner -> currentModelRunner.getAverageInferenceTime()
+            else -> 0L
+        }
         val temporalStats = temporalRecognizer.getStats()
         
         val timeSinceLastFrame = System.currentTimeMillis() - lastFrameTime.get()

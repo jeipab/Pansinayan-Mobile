@@ -52,7 +52,15 @@ android {
     // Prevent compression of model files
     aaptOptions {
         noCompress "tflite"
+        noCompress "onnx"
         noCompress "task"
+    }
+    
+    // ONNX Runtime specific configuration
+    packagingOptions {
+        pickFirst '**/libc++_shared.so'
+        pickFirst '**/libjsc.so'
+        pickFirst '**/libonnxruntime.so'
     }
 }
 
@@ -70,7 +78,10 @@ dependencies {
     implementation "androidx.camera:camera-lifecycle:${camerax_version}"
     implementation "androidx.camera:camera-view:${camerax_version}"
 
-    // TensorFlow Lite
+    // ONNX Runtime (replacing TensorFlow Lite)
+    implementation 'com.microsoft.onnxruntime:onnxruntime-android:1.18.0'
+    
+    // TensorFlow Lite (keeping for compatibility)
     implementation 'org.tensorflow:tensorflow-lite:2.14.0'
     implementation 'org.tensorflow:tensorflow-lite-gpu:2.14.0'
     implementation 'org.tensorflow:tensorflow-lite-support:0.4.4'
@@ -104,14 +115,14 @@ dependencies {
     implementation composeBom
     androidTestImplementation composeBom
 
-    implementation 'androidx.compose.ui:ui'
-    implementation 'androidx.compose.material3:material3'
-    implementation 'androidx.compose.ui:ui-tooling-preview'
-    debugImplementation 'androidx.compose.ui:ui-tooling'
-    debugImplementation 'androidx.compose.ui:ui-test-manifest'
+    implementation libs.androidx.ui
+    implementation libs.androidx.material3
+    implementation libs.androidx.ui.tooling.preview
+    debugImplementation libs.androidx.ui.tooling
+    debugImplementation libs.androidx.ui.test.manifest
 }
 
-configurations.all {
+configurations.configureEach {
     resolutionStrategy {
         force 'org.tensorflow:tensorflow-lite:2.14.0'
         force 'org.tensorflow:tensorflow-lite-gpu:2.14.0'
