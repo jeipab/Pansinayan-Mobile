@@ -26,8 +26,8 @@ import com.google.android.material.switchmaterial.SwitchMaterial
 import com.fslr.pansinayan.R
 import com.fslr.pansinayan.database.AppDatabase
 import com.fslr.pansinayan.database.RecognitionHistory
-import com.fslr.pansinayan.recognition.RecognitionPipeline
-import com.fslr.pansinayan.recognition.RecognizedSign
+import com.fslr.pansinayan.recognition.ContinuousRecognitionManager
+import com.fslr.pansinayan.recognition.ContinuousTranscript
 import com.fslr.pansinayan.services.ScreenRecordService
 import com.fslr.pansinayan.views.OverlayView
 import kotlinx.coroutines.Dispatchers
@@ -38,18 +38,19 @@ import java.text.SimpleDateFormat
 import java.util.*
 
 /**
- * Main activity for live sign language recognition.
+ * Main activity for continuous CTC-based sign language recognition.
  * 
  * UI Components:
- * - Camera preview (full screen or 80%)
- * - Recognition result TextView (overlay)
- * - Confidence indicator
- * - Transcript history (scrollable list)
- * - Settings button
+ * - Camera preview (full screen)
+ * - Continuous transcript display (scrollable)
+ * - CTC model selection (Transformer CTC / GRU CTC)
+ * - Skeleton overlay toggle
+ * - Recording controls
+ * - Debug information (optional)
  * 
  * Lifecycle:
  * - onCreate: Initialize components, request permissions
- * - onResume: Start recognition pipeline
+ * - onResume: Start continuous recognition pipeline
  * - onPause: Pause recognition
  * - onDestroy: Release all resources
  */
@@ -63,8 +64,6 @@ class MainActivity : AppCompatActivity() {
 
     // UI Components (bind these in onCreate after setContentView)
     private lateinit var previewView: PreviewView
-    private lateinit var resultTextView: TextView
-    private lateinit var confidenceTextView: TextView
     private lateinit var transcriptTextView: TextView
     private lateinit var statsTextView: TextView
     private lateinit var debugInfoTextView: TextView
@@ -82,14 +81,14 @@ class MainActivity : AppCompatActivity() {
     private var longPressStartTime = 0L
     private val longPressThreshold = 500L
 
-    // Recognition pipeline
-    private lateinit var recognitionPipeline: RecognitionPipeline
+    // Continuous recognition pipeline
+    private lateinit var continuousRecognitionManager: ContinuousRecognitionManager
 
     // Database
     private lateinit var database: AppDatabase
 
-    // Current model selection
-    private var currentModel = "Transformer"
+    // Current CTC model selection
+    private var currentModel = "Transformer CTC"
 
     // Recording state
     private var isRecording = false
@@ -106,8 +105,8 @@ class MainActivity : AppCompatActivity() {
                     updateRecordingUI(true)
                     
                     // Notify pipeline that recording has started
-                    if (::recognitionPipeline.isInitialized) {
-                        recognitionPipeline.onRecordingStarted()
+                    if (::continuousRecognitionManager.isInitialized) {
+                        continuousRecognitionManager.onRecordingStarted()
                     }
                 }
                 ScreenRecordService.BROADCAST_RECORDING_STOPPED -> {
@@ -138,17 +137,17 @@ class MainActivity : AppCompatActivity() {
                     }
                     
                     // Notify pipeline that recording has stopped
-                    if (::recognitionPipeline.isInitialized) {
-                        recognitionPipeline.onRecordingStopped()
+                    if (::continuousRecognitionManager.isInitialized) {
+                        continuousRecognitionManager.onRecordingStopped()
                     }
                 }
             }
         }
     }
 
-    // Transcript history (keep small for on-screen display)
-    private val transcript = mutableListOf<RecognizedSign>()
-    private val maxTranscriptLength = 5
+    // Continuous transcript management
+    private val transcriptHistory = mutableListOf<String>()
+    private val maxTranscriptLength = 20
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -156,8 +155,6 @@ class MainActivity : AppCompatActivity() {
         
         // Bind UI components
         previewView = findViewById(R.id.preview_view)
-        resultTextView = findViewById(R.id.result_text)
-        confidenceTextView = findViewById(R.id.confidence_text)
         transcriptTextView = findViewById(R.id.transcript_text)
         statsTextView = findViewById(R.id.stats_text)
         debugInfoTextView = findViewById(R.id.debug_info_text)
@@ -182,7 +179,7 @@ class MainActivity : AppCompatActivity() {
 
         // Check camera permission
         if (hasCameraPermission()) {
-            setupRecognitionPipeline()
+            setupContinuousRecognitionPipeline()
         } else {
             requestCameraPermission()
         }
@@ -244,16 +241,16 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        // Model selection
+        // CTC Model selection
         radioModelSelection.setOnCheckedChangeListener { _, checkedId ->
             when (checkedId) {
-                R.id.radio_transformer -> {
-                    currentModel = "Transformer"
-                    switchModel("classification/sign_transformer_fp16.tflite")
+                R.id.radio_transformer_ctc -> {
+                    currentModel = "Transformer CTC"
+                    switchCTCModel("ctc/sign_transformer_ctc_fp16.tflite")
                 }
-                R.id.radio_gru -> {
-                    currentModel = "GRU"
-                    switchModel("classification/mediapipe_gru_fp16.tflite")
+                R.id.radio_gru_ctc -> {
+                    currentModel = "GRU CTC"
+                    switchCTCModel("ctc/mediapipe_gru_ctc_fp16.tflite")
                 }
             }
         }
@@ -285,11 +282,11 @@ class MainActivity : AppCompatActivity() {
         Log.i(TAG, "Debug mode $status")
     }
 
-    private fun switchModel(modelPath: String) {
+    private fun switchCTCModel(modelPath: String) {
         Toast.makeText(this, "Switching to $currentModel model...", Toast.LENGTH_SHORT).show()
-        Log.i(TAG, "Switching model to: $modelPath")
+        Log.i(TAG, "Switching CTC model to: $modelPath")
         
-        // TODO: Implement actual model switching in RecognitionPipeline
+        // TODO: Implement actual CTC model switching in ContinuousRecognitionManager
         // For now, just show a toast
         lifecycleScope.launch {
             delay(500)
@@ -399,40 +396,40 @@ class MainActivity : AppCompatActivity() {
      * Switch between front and back camera.
      */
     private fun switchCamera() {
-        if (::recognitionPipeline.isInitialized) {
-            recognitionPipeline.switchCamera()
-            val cameraName = if (recognitionPipeline.isFrontCamera()) "Front" else "Back"
+        if (::continuousRecognitionManager.isInitialized) {
+            continuousRecognitionManager.switchCamera()
+            val cameraName = if (continuousRecognitionManager.isFrontCamera()) "Front" else "Back"
             Toast.makeText(this, "$cameraName camera", Toast.LENGTH_SHORT).show()
             Log.i(TAG, "Switched to $cameraName camera")
         }
     }
 
     /**
-     * Set up the recognition pipeline with callbacks.
+     * Set up the continuous CTC recognition pipeline with callbacks.
      */
-    private fun setupRecognitionPipeline() {
+    private fun setupContinuousRecognitionPipeline() {
         try {
-            recognitionPipeline = RecognitionPipeline(
+            continuousRecognitionManager = ContinuousRecognitionManager(
                 context = this,
                 lifecycleOwner = this,
                 previewView = previewView,
-                onSignRecognized = { recognizedSign ->
-                    handleRecognizedSign(recognizedSign)
+                onTranscriptUpdate = { continuousTranscript ->
+                    handleContinuousTranscript(continuousTranscript)
                 },
                 onFrameUpdate = { keypoints, imageWidth, imageHeight, isOccluded ->
                     handleFrameUpdate(keypoints, imageWidth, imageHeight, isOccluded)
                 }
             )
 
-            recognitionPipeline.initialize()
-            Log.i(TAG, "Recognition pipeline initialized")
+            continuousRecognitionManager.initialize()
+            Log.i(TAG, "Continuous CTC recognition pipeline initialized")
 
             // Start periodic stats update
             startStatsUpdater()
 
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to setup pipeline", e)
-            Toast.makeText(this, "Failed to initialize recognition pipeline", Toast.LENGTH_LONG).show()
+            Log.e(TAG, "Failed to setup CTC pipeline", e)
+            Toast.makeText(this, "Failed to initialize continuous recognition pipeline", Toast.LENGTH_LONG).show()
         }
     }
 
@@ -464,79 +461,55 @@ class MainActivity : AppCompatActivity() {
     }
 
     /**
-     * Handle a newly recognized sign.
+     * Handle continuous transcript updates from CTC recognition.
      * Called on main thread.
      */
-    private fun handleRecognizedSign(sign: RecognizedSign) {
-        Log.i(TAG, "Recognized: ${sign.glossLabel} (${sign.categoryLabel}) - ${sign.confidence}")
+    private fun handleContinuousTranscript(transcript: ContinuousTranscript) {
+        Log.i(TAG, "Continuous transcript: '${transcript.currentPhrase}' (${transcript.phraseCount} phrases)")
 
-        // Update main result display with format: "GLOSS (CATEGORY)"
-        resultTextView.text = "${sign.glossLabel} (${sign.categoryLabel})"
-        confidenceTextView.text = String.format("%.1f%%", sign.confidence * 100)
+        // Update transcript display with full continuous text
+        transcriptTextView.text = transcript.fullTranscript
 
-        // Update confidence color based on threshold
-        val confidenceColor = when {
-            sign.confidence >= 0.8f -> Color.GREEN
-            sign.confidence >= 0.6f -> Color.YELLOW
-            else -> Color.RED
+        // Add to transcript history for database storage
+        transcriptHistory.add(transcript.currentPhrase)
+        if (transcriptHistory.size > maxTranscriptLength) {
+            transcriptHistory.removeAt(0)
         }
-        confidenceTextView.setTextColor(confidenceColor)
-
-        // Add to temporary transcript (for on-screen display)
-        transcript.add(sign)
-        if (transcript.size > maxTranscriptLength) {
-            transcript.removeAt(0)
-        }
-
-        // Update transcript display
-        updateTranscriptDisplay()
 
         // Save to database
-        saveToDatabase(sign)
+        saveTranscriptToDatabase(transcript)
 
         // Optional: Trigger animation or sound
-        animateRecognition()
+        animateTranscriptUpdate()
     }
 
     /**
-     * Save recognized sign to database.
+     * Save continuous transcript to database.
      */
-    private fun saveToDatabase(sign: RecognizedSign) {
+    private fun saveTranscriptToDatabase(transcript: ContinuousTranscript) {
         lifecycleScope.launch(Dispatchers.IO) {
             try {
                 val history = RecognitionHistory(
-                    timestamp = sign.timestamp,
-                    glossLabel = sign.glossLabel,
-                    categoryLabel = sign.categoryLabel,
+                    timestamp = transcript.timestamp,
+                    glossLabel = transcript.currentPhrase,
+                    categoryLabel = "CONTINUOUS", // CTC doesn't use categories
                     occlusionStatus = if (occlusionIndicator.solidColor == Color.RED) "Occluded" else "Not Occluded",
                     modelUsed = currentModel
                 )
                 database.historyDao().insert(history)
-                Log.d(TAG, "Saved to database: ${sign.glossLabel} (${sign.categoryLabel})")
+                Log.d(TAG, "Saved continuous transcript to database: '${transcript.currentPhrase}'")
             } catch (e: Exception) {
-                Log.e(TAG, "Failed to save to database", e)
+                Log.e(TAG, "Failed to save continuous transcript to database", e)
             }
         }
     }
 
     /**
-     * Update transcript TextView with recent recognitions.
+     * Animate transcript update (optional).
      */
-    private fun updateTranscriptDisplay() {
-        val dateFormat = SimpleDateFormat("HH:mm:ss", Locale.getDefault())
-        val transcriptText = transcript.joinToString("\n") { sign ->
-            val time = dateFormat.format(Date(sign.timestamp))
-            "$time - ${sign.glossLabel} (${sign.categoryLabel}) (${String.format("%.1f%%", sign.confidence * 100)})"
-        }
-        transcriptTextView.text = transcriptText
-    }
-
-    /**
-     * Animate recognition result (optional).
-     */
-    private fun animateRecognition() {
+    private fun animateTranscriptUpdate() {
         // TODO: Add fade-in animation or scale animation
-        resultTextView.animate()
+        transcriptTextView.animate()
             .alpha(0f)
             .alpha(1f)
             .setDuration(300)
@@ -552,7 +525,7 @@ class MainActivity : AppCompatActivity() {
                 delay(2000)  // Update every 2 seconds
                 
                 try {
-                    val stats = recognitionPipeline.getStats()
+                    val stats = continuousRecognitionManager.getStats()
                     statsTextView.text = stats.toString()
                 } catch (e: Exception) {
                     // Ignore if pipeline not ready
@@ -564,13 +537,13 @@ class MainActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         
-        if (hasCameraPermission() && ::recognitionPipeline.isInitialized) {
-            recognitionPipeline.start()
-            Log.i(TAG, "Pipeline started")
+        if (hasCameraPermission() && ::continuousRecognitionManager.isInitialized) {
+            continuousRecognitionManager.start()
+            Log.i(TAG, "Continuous CTC pipeline started")
             
             // If recording is active, notify pipeline
             if (isRecording) {
-                recognitionPipeline.onRecordingStarted()
+                continuousRecognitionManager.onRecordingStarted()
             }
         }
     }
@@ -578,9 +551,9 @@ class MainActivity : AppCompatActivity() {
     override fun onPause() {
         super.onPause()
         
-        if (::recognitionPipeline.isInitialized) {
-            recognitionPipeline.stop()
-            Log.i(TAG, "Pipeline stopped")
+        if (::continuousRecognitionManager.isInitialized) {
+            continuousRecognitionManager.stop()
+            Log.i(TAG, "Continuous CTC pipeline stopped")
         }
     }
 
@@ -594,9 +567,9 @@ class MainActivity : AppCompatActivity() {
             Log.e(TAG, "Error unregistering receiver", e)
         }
         
-        if (::recognitionPipeline.isInitialized) {
-            recognitionPipeline.release()
-            Log.i(TAG, "Pipeline released")
+        if (::continuousRecognitionManager.isInitialized) {
+            continuousRecognitionManager.release()
+            Log.i(TAG, "Continuous CTC pipeline released")
         }
     }
 
@@ -658,7 +631,7 @@ class MainActivity : AppCompatActivity() {
             CAMERA_PERMISSION_REQUEST -> {
                 if (grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
                     Log.i(TAG, "Camera permission granted")
-                    setupRecognitionPipeline()
+                    setupContinuousRecognitionPipeline()
                 } else {
                     Log.w(TAG, "Camera permission denied")
                     Toast.makeText(
@@ -697,22 +670,24 @@ class MainActivity : AppCompatActivity() {
     // ================== UI Actions (Optional) ==================
 
     /**
-     * Clear transcript history.
+     * Clear continuous transcript history.
      */
     private fun clearTranscript() {
-        transcript.clear()
-        transcriptTextView.text = ""
-        Log.i(TAG, "Transcript cleared")
+        transcriptHistory.clear()
+        transcriptTextView.text = "Continuous Recognition Ready..."
+        Log.i(TAG, "Continuous transcript cleared")
     }
 
     /**
-     * Toggle pipeline on/off.
+     * Toggle continuous pipeline on/off.
      */
     private fun togglePipeline() {
-        if (::recognitionPipeline.isInitialized) {
+        if (::continuousRecognitionManager.isInitialized) {
             // Toggle between start and stop
             // Implementation depends on your UI design
         }
     }
 }
+
+
 

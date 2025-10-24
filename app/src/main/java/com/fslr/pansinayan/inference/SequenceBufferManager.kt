@@ -4,36 +4,39 @@ import android.util.Log
 import java.util.*
 
 /**
- * Manages a sliding window buffer of keypoint sequences.
+ * Manages a rolling buffer of keypoint sequences for continuous CTC recognition.
  * 
  * Responsibilities:
- * - Maintain circular buffer of recent keypoint frames
- * - Handle missing detections (null frames)
- * - Perform gap interpolation for smoother sequences
- * - Prepare sequences for TFLite inference
+ * - Maintain rolling buffer of recent keypoint frames (up to 300 frames)
+ * - Handle missing detections (null frames) with interpolation
+ * - Support continuous streaming without reset between predictions
+ * - Prepare sequences for CTC model inference with zero-padding
  * 
  * Usage:
- *   val bufferManager = SequenceBufferManager(windowSize = 150)
+ *   val bufferManager = CTCSequenceBufferManager()
  *   bufferManager.addFrame(keypoints)  // Add each new frame
- *   val sequence = bufferManager.getSequence()  // Get interpolated sequence
+ *   val sequence = bufferManager.getCurrentSequence()  // Get rolling sequence
  */
-class SequenceBufferManager(
-    private val windowSize: Int = 150,  // 5 seconds at 30 FPS (updated from 90/3s)
+class CTCSequenceBufferManager(
+    private val maxWindowSize: Int = 300,  // 10 seconds at 30 FPS for CTC models
     private val maxGap: Int = 5  // Maximum gap for interpolation
 ) {
     companion object {
-        private const val TAG = "SequenceBufferManager"
-        private const val MIN_SEQUENCE_LENGTH = 50  // Minimum 1.67 seconds of data (updated from 30)
+        private const val TAG = "CTCSequenceBufferManager"
+        private const val MIN_SEQUENCE_LENGTH = 30  // Minimum 1 second of data for CTC
     }
 
-    // Circular buffer to store keypoint sequences
+    // Rolling buffer to store keypoint sequences
     private val buffer = LinkedList<FloatArray?>()
     
     // Timestamps for each frame
     private val timestamps = LinkedList<Long>()
+    
+    // Frame counter for continuous tracking
+    private var frameCounter = 0L
 
     /**
-     * Add a new keypoint frame to the buffer.
+     * Add a new keypoint frame to the rolling buffer.
      * 
      * @param keypoints FloatArray of 178 values (89 keypoints × 2, or null if detection failed)
      */
@@ -42,22 +45,23 @@ class SequenceBufferManager(
         // Add to buffer
         buffer.add(keypoints)
         timestamps.add(System.currentTimeMillis())
+        frameCounter++
 
-        // Remove oldest frame if buffer exceeds window size
-        while (buffer.size > windowSize) {
+        // Remove oldest frame if buffer exceeds max window size
+        while (buffer.size > maxWindowSize) {
             buffer.removeFirst()
             timestamps.removeFirst()
         }
     }
 
     /**
-     * Get the current sequence for inference.
+     * Get the current rolling sequence for CTC inference.
      * Performs gap interpolation for missing keypoints.
      * 
-     * @return Array[T, 178] where T ≤ windowSize, or null if insufficient data
+     * @return Array[T, 178] where T ≤ maxWindowSize, or null if insufficient data
      */
     @Synchronized
-    fun getSequence(): Array<FloatArray>? {
+    fun getCurrentSequence(): Array<FloatArray>? {
         if (buffer.size < MIN_SEQUENCE_LENGTH) {
             Log.d(TAG, "Insufficient data: ${buffer.size} frames (minimum: $MIN_SEQUENCE_LENGTH)")
             return null
@@ -68,6 +72,29 @@ class SequenceBufferManager(
 
         // Perform gap interpolation
         return interpolateGaps(sequence)
+    }
+
+    /**
+     * Get a sliding window sequence of specified length.
+     * Useful for different inference strategies.
+     * 
+     * @param length Desired sequence length (≤ maxWindowSize)
+     * @return Array[length, 178] or null if insufficient data
+     */
+    @Synchronized
+    fun getSlidingWindowSequence(length: Int): Array<FloatArray>? {
+        val actualLength = minOf(length, buffer.size, maxWindowSize)
+        
+        if (actualLength < MIN_SEQUENCE_LENGTH) {
+            Log.d(TAG, "Insufficient data: ${buffer.size} frames (requested: $length, minimum: $MIN_SEQUENCE_LENGTH)")
+            return null
+        }
+
+        // Get the most recent frames
+        val recentFrames = buffer.takeLast(actualLength).toTypedArray()
+        
+        // Perform gap interpolation
+        return interpolateGaps(recentFrames)
     }
 
     /**
@@ -147,17 +174,23 @@ class SequenceBufferManager(
     fun getBufferSize(): Int = buffer.size
 
     /**
+     * Get frame counter for continuous tracking.
+     */
+    fun getFrameCounter(): Long = frameCounter
+
+    /**
      * Clear buffer (useful for restarting recognition).
      */
     @Synchronized
     fun clear() {
         buffer.clear()
         timestamps.clear()
-        Log.i(TAG, "Buffer cleared")
+        frameCounter = 0L
+        Log.i(TAG, "CTC buffer cleared")
     }
 
     /**
-     * Check if buffer has enough data for inference.
+     * Check if buffer has enough data for CTC inference.
      */
     fun hasEnoughData(): Boolean {
         return buffer.size >= MIN_SEQUENCE_LENGTH
@@ -171,5 +204,33 @@ class SequenceBufferManager(
         val totalCount = buffer.size
         return Pair(nullCount, totalCount)
     }
+
+    /**
+     * Get buffer statistics for debugging.
+     */
+    fun getBufferStats(): CTCBufferStats {
+        val nullCount = buffer.count { it == null }
+        val validCount = buffer.size - nullCount
+        val nullRate = if (buffer.size > 0) (nullCount.toFloat() / buffer.size * 100) else 0f
+        
+        return CTCBufferStats(
+            totalFrames = buffer.size,
+            validFrames = validCount,
+            nullFrames = nullCount,
+            nullRate = nullRate,
+            frameCounter = frameCounter,
+            bufferUtilization = (buffer.size.toFloat() / maxWindowSize * 100)
 }
+
+/**
+ * Statistics for CTC sequence buffer.
+ */
+data class CTCBufferStats(
+    val totalFrames: Int,
+    val validFrames: Int,
+    val nullFrames: Int,
+    val nullRate: Float,
+    val frameCounter: Long,
+    val bufferUtilization: Float
+)
 

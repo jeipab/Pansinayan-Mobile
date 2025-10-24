@@ -2,47 +2,46 @@
 
 **Real-time Filipino Sign Language (FSL) Recognition on Android**
 
-This repository contains the official Android application for **Pansinayan**, a system that translates Filipino Sign Language into text in real-time.
-The app uses the device's camera, **MediaPipe** for keypoint extraction, and optimized **TFLite models (Transformer/GRU)** for live inference.
+This repository contains the official Android application for **Pansinayan**, a system that translates Filipino Sign Language into text in real-time using CTC-based continuous recognition.
+The app uses the device's camera, **MediaPipe** for keypoint extraction, and optimized **CTC TFLite models (Transformer/GRU)** for continuous sign recognition.
 
-This project provides the complete, production-ready Android scaffolding code and the Python scripts needed to export your own trained models for deployment.
+This project provides the complete, production-ready Android scaffolding code for CTC-based continuous sign language recognition.
 
 ---
 
 ## 🚀 Features
 
-- **Live Recognition:** Uses CameraX for a high-performance, real-time camera feed at 30 FPS.
-- **Dual Recognition Modes:**
-  - **Classification:** Isolated sign recognition (one sign per 5-second window)
-  - **CTC:** Continuous sign recognition (multiple signs per window, fluent signing)
-- **Dual-Model Support:** Real-time switching between Transformer (high accuracy) and GRU (lightweight) models.
-- **Advanced Keypoint Extraction:** MediaPipe extracts 89 keypoints (25 pose + 21 left hand + 21 right hand + 22 face) = 178 data points.
-- **Skeleton Visualization:** Real-time overlay showing pose (green) and hands (yellow). Toggle on/off, long-press for debug mode.
-- **Occlusion Detection:** UI indicator when hand blocks face (affects accuracy).
-- **Transcript Building:** Displays last 5 recognized signs with timestamps and confidence scores.
-- **Persistent History:** All recognitions saved to Room database for review.
-- **CSV Export:** Export recognition history for analysis.
+- **Continuous Recognition:** Uses CTC models for fluent, continuous sign language recognition without pauses
+- **Dual-Model Support:** Real-time switching between Transformer CTC (high accuracy) and GRU CTC (lightweight) models
+- **Advanced Keypoint Extraction:** MediaPipe extracts 89 keypoints (25 pose + 21 left hand + 21 right hand + 22 face) = 178 data points
+- **Skeleton Visualization:** Real-time overlay showing pose (green) and hands (yellow). Toggle on/off, long-press for debug mode
+- **Occlusion Detection:** UI indicator when hand blocks face (affects accuracy)
+- **Continuous Transcript:** Displays continuous recognition results with phrase segmentation
+- **Persistent History:** All recognitions saved to Room database for review
+- **CSV Export:** Export recognition history for analysis
 
 ---
 
 ## ⚙️ System Architecture
 
-The app's recognition pipeline is designed for high performance and low latency:
+The app's CTC recognition pipeline is designed for continuous sign language recognition:
 
 ```
 Camera (CameraX @ 30 FPS)
    → MediaPipeProcessor (Extracts 89 keypoints × 2 = 178D)
-   → SequenceBufferManager (Builds 150-frame sliding window = 5 seconds)
-   → TFLiteModelRunner (Runs Transformer/GRU model)
-   → Classification: TemporalRecognizer (Filters results) → Single sign
-   → CTC: CTCDecoder (Segments sequence) → Multiple signs
-   → UI Update (Transcript building)
+   → CTCSequenceBufferManager (Builds 300-frame rolling window = 10 seconds)
+   → CTCModelInterpreter (Runs Transformer/GRU CTC model)
+   → CTCDecoder (Greedy CTC decoding with blank token removal)
+   → ContinuousRecognitionManager (Orchestrates continuous recognition)
+   → UI Update (Continuous transcript building)
 ```
 
-**Dual Recognition Modes:**
+**CTC Recognition Features:**
 
-- **Classification:** Predicts one sign per 5-second window (isolated signs with pauses)
-- **CTC:** Predicts multiple signs per window (continuous fluent signing)
+- **Continuous Recognition:** Predicts multiple signs per window without pauses
+- **Rolling Buffer:** 300-frame window (10 seconds) for continuous processing
+- **CTC Decoding:** Greedy algorithm with blank token removal
+- **Phrase Segmentation:** Automatic phrase boundary detection
 
 ---
 
@@ -60,44 +59,40 @@ Camera (CameraX @ 30 FPS)
 
 ### **2. Sequence Management**
 
-- **SequenceBufferManager** (`inference/SequenceBufferManager.kt`) - Sliding window buffer:
-  - Window: 150 frames (5 seconds at 30 FPS)
+- **CTCSequenceBufferManager** (`inference/CTCSequenceBufferManager.kt`) - Rolling window buffer:
+  - Window: 300 frames (10 seconds at 30 FPS)
   - Gap interpolation for missing frames
-  - Minimum 50 frames before inference
+  - Minimum 30 frames before inference
+  - Continuous processing without resets
 
-### **3. Model Inference**
+### **3. CTC Model Inference**
 
-- **TFLiteModelRunner** (`inference/TFLiteModelRunner.kt`) - TFLite inference engine:
-  - Auto-detects model type (Classification vs CTC)
-  - Input: `[1, 150, 178]` (batch, time, features)
-  - Classification output: `[1, 105]` gloss + `[1, 10]` category
-  - CTC output: `[1, 150, 106]` gloss + `[1, 150, 10]` category (per-frame)
+- **CTCModelInterpreter** (`inference/CTCModelInterpreter.kt`) - CTC TFLite inference engine:
+  - Input: `[1, 300, 178]` (batch, time, features)
+  - Output: `[1, 300, 106]` (batch, time, classes=105 glosses + 1 blank)
   - GPU acceleration with fallback to CPU
+  - Fixed sequence length with zero-padding
 - **CTCDecoder** (`inference/CTCDecoder.kt`) - CTC greedy decoder:
   - Collapses repeated predictions
   - Removes blank tokens (ID 105)
-  - Assigns categories via frame distribution + majority voting
+  - Maps remaining indices to gloss strings
+  - Confidence scoring support
 
-### **4. Recognition Logic**
+### **4. Continuous Recognition Logic**
 
-- **RecognitionPipeline** (`recognition/RecognitionPipeline.kt`) - Orchestrates entire flow:
-  - Runs inference every 10 frames (~0.33s intervals)
-  - Routes to Classification or CTC handler
+- **ContinuousRecognitionManager** (`recognition/ContinuousRecognitionManager.kt`) - Orchestrates CTC flow:
+  - Runs inference every 15 frames (~0.5s intervals)
+  - Manages continuous transcript building
   - Health monitoring with auto-recovery
   - Thread-safe coroutine-based processing
-- **TemporalRecognizer** (`recognition/TemporalRecognizer.kt`) - Classification smoothing:
-  - Requires 5 consecutive same predictions
-  - Confidence threshold: 60%
-  - Cooldown: 1000ms between emissions
-  - Filters noise and jitter
+  - Recording state management
 
 ### **5. UI & Data Persistence**
 
-- **MainActivity** (`activities/MainActivity.kt`) - Main recognition screen:
+- **MainActivity** (`activities/MainActivity.kt`) - Main CTC recognition screen:
   - Live camera preview
-  - Real-time prediction display
-  - Transcript (last 5 signs)
-  - Model switching (Transformer/GRU)
+  - Continuous transcript display
+  - CTC model switching (Transformer/GRU)
   - Screen recording integration
 - **HistoryActivity** (`activities/HistoryActivity.kt`) - Recognition history with CSV export
 - **AppDatabase** (`database/AppDatabase.kt`) - Room database for persistence
@@ -109,25 +104,20 @@ Camera (CameraX @ 30 FPS)
 
 ### Input
 
-- **Shape:** `[1, 150, 178]`
+- **Shape:** `[1, 300, 178]`
 - **Type:** Float32
-- **Content:** 150 frames of 89 keypoints (x, y coordinates)
-
-### Output (Classification)
-
-- **Gloss:** `[1, 105]` - One of 105 FSL signs
-- **Category:** `[1, 10]` - One of 10 semantic categories
+- **Content:** 300 frames of 89 keypoints (x, y coordinates)
 
 ### Output (CTC)
 
-- **Gloss:** `[1, 150, 106]` - Per-frame predictions (105 signs + 1 blank)
-- **Category:** `[1, 150, 10]` - Per-frame category predictions
+- **Gloss:** `[1, 300, 106]` - Per-frame predictions (105 signs + 1 blank token)
+- **Blank Token:** Index 105 represents silence/no sign
 
 ### Supported Models
 
-- **Transformer:** High accuracy, ~60-70ms inference
-- **MediaPipe-GRU:** Lightweight, ~40-50ms inference
-- Both support Classification and CTC modes (auto-detected)
+- **Transformer CTC:** High accuracy, ~200-400ms inference
+- **MediaPipe-GRU CTC:** Lightweight, ~100-200ms inference
+- Both models support continuous recognition with CTC decoding
 
 ---
 
@@ -139,93 +129,32 @@ Follow these steps to build and run the project on your local machine.
 
 - Android Studio (latest version)
 - Android device or Emulator (API 24+)
-- Python 3.8+
-- Required Python libraries: `torch`, `onnx`, `onnx-tf`, `tensorflow`, `numpy`, `pandas`
+- CTC-trained PyTorch models (Transformer and GRU)
 
 ---
 
-### Step 1: Export Your Models
+### Step 1: Prepare CTC Models
 
-Before building the app, export your trained PyTorch models to the TFLite format.
+This repository is designed for CTC-based continuous sign language recognition. You'll need to provide your own CTC-trained models.
 
-#### Prerequisites
+#### CTC Model Requirements
 
-Install Python dependencies:
+- **Input Shape:** `[1, 300, 178]` (batch_size=1, sequence_length=300, features=178)
+- **Output Shape:** `[1, 300, 106]` (batch_size=1, sequence_length=300, classes=105 glosses + 1 blank)
+- **Quantization:** FP16 for mobile optimization
+- **Keypoint Structure:** 89 keypoints × 2 coordinates = 178 features
 
-**Note:**
-On Ubuntu systems, you may encounter an "externally-managed-environment" error. To fix this, create a virtual environment first:
+#### Model Files Needed
 
-```bash
-# Create a virtual environment
-python3 -m venv venv
+Place your CTC models in the following locations:
 
-# Activate the virtual environment
-source venv/bin/activate
-
-# Install dependencies
-pip install -r scripts/requirements.txt
+```
+app/src/main/assets/ctc/
+├── sign_transformer_ctc_fp16.tflite
+└── mediapipe_gru_ctc_fp16.tflite
 ```
 
-**For other systems or if you prefer not to use a virtual environment:**
-
-```bash
-pip install -r scripts/requirements.txt
-```
-
-#### Model Export Process
-
-1. **Place your PyTorch checkpoints** in the models directory:
-
-   ```
-   models/checkpoints/transformer/best_model.pt
-   models/checkpoints/gru/best_model.pt
-   ```
-
-2. **Run the export script** from the scripts directory:
-
-   ```bash
-   cd scripts
-   python model_export_and_setup.py --model both
-   ```
-
-   **Available export options:**
-
-   - `--model transformer` - Export only Transformer model
-   - `--model mediapipe_gru` - Export only GRU model
-   - `--model both` - Export both models (recommended)
-   - `--checkpoint path/to/model.pt` - Use custom checkpoint path
-   - `--skip-quantization` - Skip quantized model generation
-
-3. **Generated files** will be created in `models/converted/`:
-   ```
-   models/converted/
-   ├── sign_transformer.onnx              # ONNX model (alternative runtime)
-   ├── sign_transformer.tflite            # Standard TFLite (~4-5 MB)
-   ├── sign_transformer_quant.tflite      # Quantized TFLite (~1-2 MB) ⭐ USE THIS
-   ├── sign_mediapipe_gru_quant.tflite    # GRU quantized model (~500 KB)
-   └── label_mapping.json                 # Gloss/category labels
-   ```
-
-#### What the Export Script Does
-
-The script performs a complete conversion pipeline:
-
-1. **Loads PyTorch model** from checkpoint (.pt file)
-2. **Exports to ONNX** format (portable, cross-platform)
-3. **Converts ONNX → TensorFlow** SavedModel (intermediate)
-4. **Converts TensorFlow → TFLite** (standard + quantized)
-5. **Validates accuracy** (compares PyTorch vs TFLite predictions)
-6. **Generates label mapping** JSON for Android
-7. **Creates model specifications** document
-
-#### Troubleshooting Model Export
-
-- **Import errors**: Ensure model classes (SignTransformer, MediaPipeGRU) are available in project root
-- **Checkpoint not found**: Place `.pt` files in `models/checkpoints/[model_type]/`
-- **Conversion fails**: Check ONNX and TensorFlow dependencies are installed
-- **Poor accuracy**: Verify model architecture matches training configuration
-
----
+**Note:** The previous classification model export pipeline has been removed. This repository now focuses exclusively on CTC-based continuous recognition.
 
 ### Step 2: Set Up the Android Project
 
@@ -257,28 +186,7 @@ The script performs a complete conversion pipeline:
 
 ---
 
-### Step 3: Copy Model Files
-
-Copy the generated files from Step 1 into the Android assets directory:
-
-```bash
-# Copy converted models to Android assets
-cp models/converted/*.tflite app/src/main/assets/
-cp models/converted/label_mapping.json app/src/main/assets/
-```
-
-**Required files:**
-
-- `sign_transformer_quant.tflite` (or `sign_mediapipe_gru_quant.tflite`)
-- `label_mapping.json`
-
-**Optional files:**
-
-- `sign_transformer.onnx` (if using ONNX Runtime instead of TFLite)
-
----
-
-### Step 4: Download MediaPipe Models
+### Step 3: Download MediaPipe Models
 
 The app also requires MediaPipe’s base models for pose and hand tracking.
 
@@ -291,7 +199,7 @@ Your `assets/` folder should now contain **five files total**.
 
 ---
 
-### Step 5: Build and Run
+### Step 4: Build and Run
 
 1. **Verify Gradle Sync**
 
@@ -343,23 +251,26 @@ The skeleton overlay helps you visualize keypoints in real-time:
 │   ├── src/
 │   │   ├── main/
 │   │   │   ├── java/com/fslr/pansinayan/
-│   │   │   │   ├── activities/        # MainActivity, HistoryActivity, HomeActivity
+│   │   │   │   ├── activities/        # MainActivity, HistoryActivity
 │   │   │   │   ├── adapter/           # RecyclerView adapter for history
 │   │   │   │   ├── camera/            # CameraManager (CameraX setup)
 │   │   │   │   ├── database/          # Room database (AppDatabase, HistoryDao)
-│   │   │   │   ├── inference/         # TFLiteModelRunner, CTCDecoder, SequenceBufferManager
+│   │   │   │   ├── inference/         # CTCModelInterpreter, CTCDecoder, CTCSequenceBufferManager
 │   │   │   │   ├── mediapipe/         # MediaPipeProcessor (keypoint extraction)
-│   │   │   │   ├── recognition/       # RecognitionPipeline, TemporalRecognizer
+│   │   │   │   ├── recognition/       # ContinuousRecognitionManager
 │   │   │   │   ├── services/          # ScreenRecordService (video recording)
 │   │   │   │   ├── utils/             # LabelMapper, ModelSelector
 │   │   │   │   ├── views/             # OverlayView (skeleton visualization)
 │   │   │   │   └── res/               # Layouts, drawables, values
-│   │   │   └── assets/                # TFLite models, MediaPipe tasks, label mappings
+│   │   │   └── assets/                # CTC TFLite models, MediaPipe tasks, label mappings
 │   │   └── ...
 │   ├── build.gradle
 │   └── ...
 │
-├── model_export_and_setup.py           # Python script to export models
+├── archived_models/                   # Archived classification models
+├── data/                              # Label mapping utilities
+├── models/                            # Model storage directory
+├── scripts/                           # Utility scripts
 └── README.md
 ```
 

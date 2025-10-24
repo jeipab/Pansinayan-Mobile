@@ -37,9 +37,9 @@ class ModelSelector(private val context: Context) {
         private const val PREFS_NAME = "model_selector_prefs"
         private const val KEY_SELECTED_MODEL = "selected_model"
         
-        // Model file paths in assets
-        const val TRANSFORMER_MODEL_PATH = "classification/sign_transformer_fp16.tflite"
-        const val MEDIAPIPE_GRU_MODEL_PATH = "classification/mediapipe_gru_fp16.tflite"
+        // Model file paths in assets (CTC models)
+        const val TRANSFORMER_CTC_MODEL_PATH = "ctc/sign_transformer_ctc_fp16.tflite"
+        const val MEDIAPIPE_GRU_CTC_MODEL_PATH = "ctc/mediapipe_gru_ctc_fp16.tflite"
         
         // Default model selection
         val DEFAULT_MODEL = ModelType.TRANSFORMER
@@ -58,21 +58,21 @@ class ModelSelector(private val context: Context) {
         val isRecommended: Boolean
     ) {
         TRANSFORMER(
-            displayName = "Transformer",
-            modelPath = TRANSFORMER_MODEL_PATH,
-            description = "Multi-head attention transformer encoder. Best accuracy with reasonable speed.",
-            estimatedSize = "~1.5 MB",
-            estimatedLatency = "150-250ms",
+            displayName = "Transformer CTC",
+            modelPath = TRANSFORMER_CTC_MODEL_PATH,
+            description = "Multi-head attention transformer encoder with CTC output. Best accuracy for continuous recognition.",
+            estimatedSize = "~2-4 MB",
+            estimatedLatency = "200-400ms",
             accuracy = "★★★★★ (Highest)",
             isRecommended = true
         ),
         
         MEDIAPIPE_GRU(
-            displayName = "GRU Baseline",
-            modelPath = MEDIAPIPE_GRU_MODEL_PATH,
-            description = "Lightweight GRU network. Faster inference with slightly lower accuracy.",
-            estimatedSize = "~500 KB",
-            estimatedLatency = "50-100ms",
+            displayName = "GRU CTC Baseline",
+            modelPath = MEDIAPIPE_GRU_CTC_MODEL_PATH,
+            description = "Lightweight GRU network with CTC output. Faster inference for continuous recognition.",
+            estimatedSize = "~1-2 MB",
+            estimatedLatency = "100-200ms",
             accuracy = "★★★★☆ (High)",
             isRecommended = false
         );

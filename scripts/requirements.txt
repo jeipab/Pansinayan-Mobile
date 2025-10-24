@@ -1,3 +1,7 @@
+# CTC Model Export Pipeline Dependencies
+# For CTC model export: python scripts/export_ctc_models.py
+# Documentation: scripts/export_ctc_models_README.md
+
 # PyTorch and core ML libraries
 torch>=2.1.0,<2.2.0
 torchvision>=0.16.0,<0.17.0

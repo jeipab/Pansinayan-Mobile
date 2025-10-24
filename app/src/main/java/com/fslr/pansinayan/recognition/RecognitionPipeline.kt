@@ -89,8 +89,8 @@ class RecognitionPipeline(
             mediaPipeProcessor = MediaPipeProcessor(context, this)
             bufferManager = SequenceBufferManager(windowSize = 150, maxGap = 5)  // Updated: 150 frames = 5 seconds at 30 FPS
             
-            // Initialize TFLite model runner
-            modelRunner = TFLiteModelRunner(context, modelPath = "classification/sign_transformer_fp16.tflite")
+            // Initialize TFLite model runner (CTC model)
+            modelRunner = TFLiteModelRunner(context, modelPath = "ctc/sign_transformer_ctc_fp16.tflite")
             
             temporalRecognizer = TemporalRecognizer(
                 stabilityThreshold = 5,
