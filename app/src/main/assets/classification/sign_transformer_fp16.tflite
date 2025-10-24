@@ -1,0 +1,4 @@
+# Placeholder for sign_transformer_fp16.tflite
+# This file will be replaced with the actual FP16 TFLite model
+# Expected input: [1, T, 178] where T is sequence length
+# Expected output: [1, 105] classification logits

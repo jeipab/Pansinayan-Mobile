@@ -7,8 +7,6 @@ import androidx.lifecycle.LifecycleOwner
 import com.fslr.pansinayan.camera.CameraManager
 import com.fslr.pansinayan.inference.InferenceResult
 import com.fslr.pansinayan.inference.SequenceBufferManager
-import com.fslr.pansinayan.inference.SignPrediction
-import com.fslr.pansinayan.inference.ONNXModelRunner
 import com.fslr.pansinayan.inference.TFLiteModelRunner
 import com.fslr.pansinayan.mediapipe.MediaPipeProcessor
 import com.fslr.pansinayan.utils.LabelMapper
@@ -58,7 +56,7 @@ class RecognitionPipeline(
     private lateinit var cameraManager: CameraManager
     private lateinit var mediaPipeProcessor: MediaPipeProcessor
     private lateinit var bufferManager: SequenceBufferManager
-    private lateinit var modelRunner: Any // Can be ONNXModelRunner or TFLiteModelRunner
+    private lateinit var modelRunner: TFLiteModelRunner
     private lateinit var temporalRecognizer: TemporalRecognizer
     private lateinit var labelMapper: LabelMapper
 
@@ -91,14 +89,8 @@ class RecognitionPipeline(
             mediaPipeProcessor = MediaPipeProcessor(context, this)
             bufferManager = SequenceBufferManager(windowSize = 150, maxGap = 5)  // Updated: 150 frames = 5 seconds at 30 FPS
             
-            // Try ONNX first, fallback to TFLite if it fails
-            modelRunner = try {
-                Log.i(TAG, "Attempting to initialize ONNX model...")
-                ONNXModelRunner(context, modelName = "sign_transformer_ctc.onnx")
-            } catch (e: Exception) {
-                Log.w(TAG, "ONNX model failed to load, falling back to TFLite: ${e.message}")
-                TFLiteModelRunner(context, modelPath = "sign_transformer_quant.tflite")
-            }
+            // Initialize TFLite model runner
+            modelRunner = TFLiteModelRunner(context, modelPath = "classification/sign_transformer_fp16.tflite")
             
             temporalRecognizer = TemporalRecognizer(
                 stabilityThreshold = 5,
@@ -199,52 +191,14 @@ class RecognitionPipeline(
             return
         }
 
-        // Run inference with appropriate model runner
-        val currentModelRunner = modelRunner
-        val inferenceResult = when (currentModelRunner) {
-            is ONNXModelRunner -> currentModelRunner.runInference(sequence)
-            is TFLiteModelRunner -> currentModelRunner.runInference(sequence)
-            else -> {
-                Log.e(TAG, "Unknown model runner type")
-                return
-            }
-        } ?: run {
+        // Run inference with TFLite model runner
+        val inferenceResult = modelRunner.runInference(sequence) ?: run {
             Log.w(TAG, "Inference failed")
             return
         }
 
-        // Route to appropriate handler
-        if (inferenceResult.isCTC) {
-            processCTCPredictions(inferenceResult)
-        } else {
-            processClassificationPrediction(inferenceResult)
-        }
-    }
-
-    /**
-     * Process CTC predictions (multiple signs per window).
-     */
-    private suspend fun processCTCPredictions(result: InferenceResult) {
-        result.ctcPredictions?.forEach { prediction ->
-            val glossLabel = labelMapper.getGlossLabel(prediction.glossId)
-            val categoryLabel = labelMapper.getCategoryLabel(prediction.categoryId)
-            
-            val recognizedSign = RecognizedSign(
-                glossId = prediction.glossId,
-                glossLabel = glossLabel,
-                categoryId = prediction.categoryId,
-                categoryLabel = categoryLabel,
-                confidence = prediction.categoryConfidence,
-                timestamp = System.currentTimeMillis()
-            )
-
-            // Invoke callback on main thread
-            withContext(Dispatchers.Main) {
-                onSignRecognized(recognizedSign)
-            }
-
-            Log.i(TAG, "CTC sign: $glossLabel ($categoryLabel) - frames: ${prediction.startFrame}-${prediction.endFrame}")
-        }
+        // Process classification prediction
+        processClassificationPrediction(inferenceResult)
     }
 
     /**
@@ -444,10 +398,7 @@ class RecognitionPipeline(
         
         cameraManager.release()
         mediaPipeProcessor.release()
-        when (val currentModelRunner = modelRunner) {
-            is ONNXModelRunner -> currentModelRunner.release()
-            is TFLiteModelRunner -> currentModelRunner.release()
-        }
+        modelRunner.release()
         
         Log.i(TAG, "All resources released")
     }
@@ -458,11 +409,7 @@ class RecognitionPipeline(
     fun getStats(): PipelineStats {
         val (cameraProcessed, cameraTotal) = cameraManager.getStats()
         val (mediapipeSuccess, mediapipeFailure) = mediaPipeProcessor.getStats()
-        val avgInferenceTime = when (val currentModelRunner = modelRunner) {
-            is ONNXModelRunner -> currentModelRunner.getAverageInferenceTime()
-            is TFLiteModelRunner -> currentModelRunner.getAverageInferenceTime()
-            else -> 0L
-        }
+        val avgInferenceTime = modelRunner.getAverageInferenceTime()
         val temporalStats = temporalRecognizer.getStats()
         
         val timeSinceLastFrame = System.currentTimeMillis() - lastFrameTime.get()

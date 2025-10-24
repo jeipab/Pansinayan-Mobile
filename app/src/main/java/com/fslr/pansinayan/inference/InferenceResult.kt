@@ -1,7 +1,7 @@
 package com.fslr.pansinayan.inference
 
 /**
- * Data class to hold inference results.
+ * Data class to hold inference results for classification models.
  */
 data class InferenceResult(
     val glossPrediction: Int,
@@ -12,10 +12,7 @@ data class InferenceResult(
     val categoryConfidence: Float,
     val categoryProbabilities: FloatArray,
     val inferenceTimeMs: Long,
-    val sequenceLength: Int,
-    // CTC-specific fields
-    val isCTC: Boolean = false,
-    val ctcPredictions: List<SignPrediction>? = null
+    val sequenceLength: Int
 ) {
     override fun equals(other: Any?): Boolean {
         if (this === other) return true

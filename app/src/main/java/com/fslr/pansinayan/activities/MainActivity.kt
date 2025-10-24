@@ -249,11 +249,11 @@ class MainActivity : AppCompatActivity() {
             when (checkedId) {
                 R.id.radio_transformer -> {
                     currentModel = "Transformer"
-                    switchModel("sign_transformer_quant.tflite")
+                    switchModel("classification/sign_transformer_fp16.tflite")
                 }
                 R.id.radio_gru -> {
                     currentModel = "GRU"
-                    switchModel("sign_mediapipe_gru_quant.tflite")
+                    switchModel("classification/mediapipe_gru_fp16.tflite")
                 }
             }
         }

@@ -38,8 +38,8 @@ class ModelSelector(private val context: Context) {
         private const val KEY_SELECTED_MODEL = "selected_model"
         
         // Model file paths in assets
-        const val TRANSFORMER_MODEL_PATH = "sign_transformer_quant.tflite"
-        const val MEDIAPIPE_GRU_MODEL_PATH = "sign_mediapipe_gru_quant.tflite"
+        const val TRANSFORMER_MODEL_PATH = "classification/sign_transformer_fp16.tflite"
+        const val MEDIAPIPE_GRU_MODEL_PATH = "classification/mediapipe_gru_fp16.tflite"
         
         // Default model selection
         val DEFAULT_MODEL = ModelType.TRANSFORMER
