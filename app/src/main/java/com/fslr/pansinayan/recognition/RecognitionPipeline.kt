@@ -5,9 +5,9 @@ import android.util.Log
 import androidx.camera.core.ImageProxy
 import androidx.lifecycle.LifecycleOwner
 import com.fslr.pansinayan.camera.CameraManager
-import com.fslr.pansinayan.inference.InferenceResult
+import com.fslr.pansinayan.inference.CtcGreedyDecoder
+import com.fslr.pansinayan.inference.CtcModelRunner
 import com.fslr.pansinayan.inference.SequenceBufferManager
-import com.fslr.pansinayan.inference.TFLiteModelRunner
 import com.fslr.pansinayan.mediapipe.MediaPipeProcessor
 import com.fslr.pansinayan.utils.LabelMapper
 import kotlinx.coroutines.*
@@ -56,9 +56,14 @@ class RecognitionPipeline(
     private lateinit var cameraManager: CameraManager
     private lateinit var mediaPipeProcessor: MediaPipeProcessor
     private lateinit var bufferManager: SequenceBufferManager
-    private lateinit var modelRunner: TFLiteModelRunner
+    private lateinit var ctcRunner: CtcModelRunner
     private lateinit var temporalRecognizer: TemporalRecognizer
+    private lateinit var ctcAggregator: CtcAggregator
+    private var ctcWindowSize: Int = 120
+    private var ctcStride: Int = 40
     private lateinit var labelMapper: LabelMapper
+    private var totalInferenceTimeMs: Long = 0L
+    private var inferenceCount: Long = 0L
 
     // Coroutine scope for async operations
     private val pipelineScope = CoroutineScope(Dispatchers.Default + SupervisorJob())
@@ -87,10 +92,18 @@ class RecognitionPipeline(
 
             cameraManager = CameraManager(context, lifecycleOwner, previewView, targetFps = 30)
             mediaPipeProcessor = MediaPipeProcessor(context, this)
-            bufferManager = SequenceBufferManager(windowSize = 150, maxGap = 5)  // Updated: 150 frames = 5 seconds at 30 FPS
-            
-            // Initialize TFLite model runner
-            modelRunner = TFLiteModelRunner(context, modelPath = "classification/sign_transformer_fp16.tflite")
+
+            // Initialize CTC model runner from assets/ctc (default to Transformer model)
+            ctcRunner = CtcModelRunner(
+                context = context,
+                tflitePath = "ctc/sign_transformer_ctc_fp16.tflite",
+                metadataPath = "ctc/sign_transformer_ctc_fp16.model.json"
+            )
+
+            ctcWindowSize = ctcRunner.meta.window_size_hint
+            ctcStride = ctcRunner.meta.stride_hint
+            bufferManager = SequenceBufferManager(windowSize = ctcWindowSize, maxGap = 5)
+            ctcAggregator = CtcAggregator(iouThreshold = 0.5f)
             
             temporalRecognizer = TemporalRecognizer(
                 stabilityThreshold = 5,
@@ -168,9 +181,7 @@ class RecognitionPipeline(
                 
                 bufferManager.addFrame(keypoints)
 
-                if (currentFrame % INFERENCE_INTERVAL == 0) {
-                    runInferenceIfReady()
-                }
+                runCtcIfReady(currentFrame)
             } catch (e: Exception) {
                 Log.e(TAG, "Frame processing failed", e)
             }
@@ -184,55 +195,73 @@ class RecognitionPipeline(
     /**
      * Run inference if buffer has enough data.
      */
-    private suspend fun runInferenceIfReady() {
-        // Get current sequence from buffer
-        val sequence = bufferManager.getSequence() ?: run {
-            Log.d(TAG, "Buffer not ready (size: ${bufferManager.getBufferSize()})")
+    private suspend fun runCtcIfReady(currentFrame: Int) {
+        val pop = bufferManager.popWindowIfReady(ctcStride) ?: return
+        val (windowSeq, missingRatio) = pop
+        if (missingRatio > 0.5f) {
+            Log.d(TAG, "Skipping inference due to missing ratio: $missingRatio")
             return
         }
 
-        // Run inference with TFLite model runner
-        val inferenceResult = modelRunner.runInference(sequence) ?: run {
-            Log.w(TAG, "Inference failed")
-            return
-        }
+        try {
+            val startTime = System.currentTimeMillis()
+            val outputs = ctcRunner.run(windowSeq)
+            val infMs = System.currentTimeMillis() - startTime
+            totalInferenceTimeMs += infMs
+            inferenceCount += 1
+            val logProbs = outputs.logProbs[0] // [T, num_ctc]
+            val tokens = CtcGreedyDecoder.decode(logProbs, ctcRunner.meta.blank_id)
 
-        // Process classification prediction
-        processClassificationPrediction(inferenceResult)
-    }
+            // Estimate absolute window start frame index
+            val windowStartAbs = currentFrame - windowSeq.size + 1
+            val newOnes = ctcAggregator.addWindowTokens(windowStartAbs, tokens)
 
-    /**
-     * Process classification prediction (single sign with temporal filtering).
-     */
-    private suspend fun processClassificationPrediction(result: InferenceResult) {
-        // Process through temporal recognizer
-        val recognitionEvent = temporalRecognizer.processNewPrediction(
-            glossId = result.glossPrediction,
-            confidence = result.glossConfidence
-        )
-
-        // If stable sign detected, emit to UI
-        if (recognitionEvent != null) {
-            val glossLabel = labelMapper.getGlossLabel(recognitionEvent.glossId)
-            val categoryLabel = labelMapper.getCategoryLabel(result.categoryPrediction)
-            
-            val recognizedSign = RecognizedSign(
-                glossId = recognitionEvent.glossId,
-                glossLabel = glossLabel,
-                categoryId = result.categoryPrediction,
-                categoryLabel = categoryLabel,
-                confidence = recognitionEvent.confidence,
-                timestamp = recognitionEvent.timestamp
-            )
-
-            // Invoke callback on main thread
-            withContext(Dispatchers.Main) {
-                onSignRecognized(recognizedSign)
+            if (newOnes.isNotEmpty()) {
+                for (tk in newOnes) {
+                    val glossLabel = labelMapper.getGlossLabel(tk.id)
+                    var categoryId = 0
+                    outputs.catLogits?.let { cat ->
+                        // Average logits over token span and argmax
+                        val twoD = cat[0] // [T, num_cat]
+                        val startT = maxOf(0, tk.startT)
+                        val endT = minOf(twoD.size - 1, tk.endT)
+                        if (endT >= startT && twoD.isNotEmpty()) {
+                            val numCat = twoD[0].size
+                            val avg = FloatArray(numCat) { 0f }
+                            var count = 0
+                            for (t in startT..endT) {
+                                val row = twoD[t]
+                                for (c in 0 until numCat) avg[c] += row[c]
+                                count += 1
+                            }
+                            if (count > 0) {
+                                for (c in avg.indices) avg[c] /= count.toFloat()
+                                var arg = 0
+                                var best = avg[0]
+                                for (c in 1 until avg.size) if (avg[c] > best) { best = avg[c]; arg = c }
+                                categoryId = arg
+                            }
+                        }
+                    }
+                    val categoryLabel = labelMapper.getCategoryLabel(categoryId)
+                    val recognizedSign = RecognizedSign(
+                        glossId = tk.id,
+                        glossLabel = glossLabel,
+                        categoryId = categoryId,
+                        categoryLabel = categoryLabel,
+                        confidence = tk.confidence,
+                        timestamp = System.currentTimeMillis()
+                    )
+                    withContext(Dispatchers.Main) { onSignRecognized(recognizedSign) }
+                    Log.i(TAG, "CTC token: ${tk.id} $glossLabel conf=${"%.2f".format(tk.confidence)} frames=[${tk.startT}-${tk.endT}]")
+                }
             }
-
-            Log.i(TAG, "Classification sign: $glossLabel ($categoryLabel) - conf: ${recognitionEvent.confidence}")
+        } catch (e: Exception) {
+            Log.e(TAG, "CTC inference failed", e)
         }
     }
+
+    // Removed legacy single-label classification postprocessing
 
     /**
      * Start health monitoring to detect frozen pipeline.
@@ -398,7 +427,7 @@ class RecognitionPipeline(
         
         cameraManager.release()
         mediaPipeProcessor.release()
-        modelRunner.release()
+        ctcRunner.release()
         
         Log.i(TAG, "All resources released")
     }
@@ -409,7 +438,7 @@ class RecognitionPipeline(
     fun getStats(): PipelineStats {
         val (cameraProcessed, cameraTotal) = cameraManager.getStats()
         val (mediapipeSuccess, mediapipeFailure) = mediaPipeProcessor.getStats()
-        val avgInferenceTime = modelRunner.getAverageInferenceTime()
+        val avgInferenceTime = if (inferenceCount > 0) totalInferenceTimeMs / inferenceCount else 0L
         val temporalStats = temporalRecognizer.getStats()
         
         val timeSinceLastFrame = System.currentTimeMillis() - lastFrameTime.get()
@@ -445,6 +474,61 @@ class RecognitionPipeline(
         lastFrameTime.set(System.currentTimeMillis())
         lastKeypointTime.set(System.currentTimeMillis())
         Log.i(TAG, "Pipeline resumed")
+    }
+
+    /**
+     * Switch active CTC model at runtime.
+     * Blocks frame processing during swap, rebuilds buffer/aggregator from metadata hints,
+     * warms up the new model, and then resumes.
+     */
+    fun switchModel(tflitePath: String, metadataPath: String, preferGpu: Boolean = false) {
+        pipelineScope.launch(Dispatchers.IO) {
+            try {
+                Log.i(TAG, "Switching CTC model to tflite=$tflitePath meta=$metadataPath ...")
+                // Pause processing
+                isPaused.set(true)
+
+                // Release previous runner
+                try { ctcRunner.release() } catch (_: Throwable) {}
+
+                // Instantiate new runner
+                ctcRunner = CtcModelRunner(
+                    context = context,
+                    tflitePath = tflitePath,
+                    metadataPath = metadataPath,
+                    preferGpu = preferGpu
+                )
+
+                // Update window/stride from new metadata
+                ctcWindowSize = ctcRunner.meta.window_size_hint
+                ctcStride = ctcRunner.meta.stride_hint
+
+                // Rebuild buffer and aggregator
+                bufferManager.clear()
+                bufferManager = SequenceBufferManager(windowSize = ctcWindowSize, maxGap = 5)
+                ctcAggregator.clear()
+
+                // Reset perf stats
+                totalInferenceTimeMs = 0L
+                inferenceCount = 0L
+
+                // Warm-up run with a zero window to allocate tensors
+                try {
+                    val dummy = Array(ctcWindowSize) { FloatArray(178) { 0f } }
+                    ctcRunner.run(dummy)
+                } catch (_: Throwable) {}
+
+                // Resume
+                lastFrameTime.set(System.currentTimeMillis())
+                lastKeypointTime.set(System.currentTimeMillis())
+                isPaused.set(false)
+
+                Log.i(TAG, "Model switch completed")
+            } catch (t: Throwable) {
+                Log.e(TAG, "Model switch failed", t)
+                isPaused.set(false)
+            }
+        }
     }
 
     /**

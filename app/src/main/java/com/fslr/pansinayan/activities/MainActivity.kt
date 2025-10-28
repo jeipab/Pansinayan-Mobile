@@ -249,11 +249,17 @@ class MainActivity : AppCompatActivity() {
             when (checkedId) {
                 R.id.radio_transformer -> {
                     currentModel = "Transformer"
-                    switchModel("classification/sign_transformer_fp16.tflite")
+                    switchModel(
+                        tflitePath = "ctc/sign_transformer_ctc_fp16.tflite",
+                        metadataPath = "ctc/sign_transformer_ctc_fp16.model.json"
+                    )
                 }
                 R.id.radio_gru -> {
                     currentModel = "GRU"
-                    switchModel("classification/mediapipe_gru_fp16.tflite")
+                    switchModel(
+                        tflitePath = "ctc/mediapipe_gru_ctc_fp16.tflite",
+                        metadataPath = "ctc/mediapipe_gru_ctc_fp16.model.json"
+                    )
                 }
             }
         }
@@ -285,15 +291,11 @@ class MainActivity : AppCompatActivity() {
         Log.i(TAG, "Debug mode $status")
     }
 
-    private fun switchModel(modelPath: String) {
+    private fun switchModel(tflitePath: String, metadataPath: String) {
         Toast.makeText(this, "Switching to $currentModel model...", Toast.LENGTH_SHORT).show()
-        Log.i(TAG, "Switching model to: $modelPath")
-        
-        // TODO: Implement actual model switching in RecognitionPipeline
-        // For now, just show a toast
-        lifecycleScope.launch {
-            delay(500)
-            Toast.makeText(this@MainActivity, "$currentModel model active", Toast.LENGTH_SHORT).show()
+        Log.i(TAG, "Switching model to: tflite=$tflitePath meta=$metadataPath")
+        if (::recognitionPipeline.isInitialized) {
+            recognitionPipeline.switchModel(tflitePath, metadataPath)
         }
     }
 

@@ -37,9 +37,11 @@ class ModelSelector(private val context: Context) {
         private const val PREFS_NAME = "model_selector_prefs"
         private const val KEY_SELECTED_MODEL = "selected_model"
         
-        // Model file paths in assets
-        const val TRANSFORMER_MODEL_PATH = "classification/sign_transformer_fp16.tflite"
-        const val MEDIAPIPE_GRU_MODEL_PATH = "classification/mediapipe_gru_fp16.tflite"
+        // CTC model file paths in assets
+        const val TRANSFORMER_MODEL_PATH = "ctc/sign_transformer_ctc_fp16.tflite"
+        const val MEDIAPIPE_GRU_MODEL_PATH = "ctc/mediapipe_gru_ctc_fp16.tflite"
+        const val TRANSFORMER_META_PATH = "ctc/sign_transformer_ctc_fp16.model.json"
+        const val MEDIAPIPE_GRU_META_PATH = "ctc/mediapipe_gru_ctc_fp16.model.json"
         
         // Default model selection
         val DEFAULT_MODEL = ModelType.TRANSFORMER
@@ -51,6 +53,7 @@ class ModelSelector(private val context: Context) {
     enum class ModelType(
         val displayName: String,
         val modelPath: String,
+        val metadataPath: String,
         val description: String,
         val estimatedSize: String,
         val estimatedLatency: String,
@@ -60,6 +63,7 @@ class ModelSelector(private val context: Context) {
         TRANSFORMER(
             displayName = "Transformer",
             modelPath = TRANSFORMER_MODEL_PATH,
+            metadataPath = TRANSFORMER_META_PATH,
             description = "Multi-head attention transformer encoder. Best accuracy with reasonable speed.",
             estimatedSize = "~1.5 MB",
             estimatedLatency = "150-250ms",
@@ -70,6 +74,7 @@ class ModelSelector(private val context: Context) {
         MEDIAPIPE_GRU(
             displayName = "GRU Baseline",
             modelPath = MEDIAPIPE_GRU_MODEL_PATH,
+            metadataPath = MEDIAPIPE_GRU_META_PATH,
             description = "Lightweight GRU network. Faster inference with slightly lower accuracy.",
             estimatedSize = "~500 KB",
             estimatedLatency = "50-100ms",
