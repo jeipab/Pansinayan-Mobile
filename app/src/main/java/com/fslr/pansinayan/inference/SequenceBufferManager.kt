@@ -31,6 +31,7 @@ class SequenceBufferManager(
     
     // Timestamps for each frame
     private val timestamps = LinkedList<Long>()
+    private var framesSinceLastInference: Int = 0
 
     /**
      * Add a new keypoint frame to the buffer.
@@ -42,6 +43,7 @@ class SequenceBufferManager(
         // Add to buffer
         buffer.add(keypoints)
         timestamps.add(System.currentTimeMillis())
+        framesSinceLastInference++
 
         // Remove oldest frame if buffer exceeds window size
         while (buffer.size > windowSize) {
@@ -68,6 +70,26 @@ class SequenceBufferManager(
 
         // Perform gap interpolation
         return interpolateGaps(sequence)
+    }
+
+    /**
+     * Return a window of up to windowSize frames (interpolated), and reset the stride counter.
+     * @return Pair(sequence[T,178], missingRatio) or null if insufficient data
+     */
+    @Synchronized
+    fun popWindowIfReady(stride: Int): Pair<Array<FloatArray>, Float>? {
+        if (buffer.size < MIN_SEQUENCE_LENGTH) return null
+        if (framesSinceLastInference < stride) return null
+
+        val take = minOf(buffer.size, windowSize)
+        val startIdx = buffer.size - take
+        val slice = Array(take) { i -> buffer[startIdx + i] }
+        val interpolated = interpolateGaps(slice)
+        framesSinceLastInference = 0
+
+        val nullCount = slice.count { it == null }
+        val missingRatio = if (take > 0) nullCount.toFloat() / take.toFloat() else 1f
+        return Pair(interpolated, missingRatio)
     }
 
     /**

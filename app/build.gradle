@@ -6,13 +6,13 @@ plugins {
 }
 
 android {
-    namespace 'com.fslr.pansinayan'
-    compileSdk 34
+    namespace = 'com.fslr.pansinayan'
+    compileSdk = 34
 
     defaultConfig {
         applicationId "com.fslr.pansinayan"
-        minSdk 24
-        targetSdk 34
+        minSdk = 24
+        targetSdk = 34
         versionCode 1
         versionName "1.0"
 
@@ -41,12 +41,12 @@ android {
     }
 
     buildFeatures {
-        viewBinding true
-        compose true
+        viewBinding = true
+        compose = true
     }
 
     composeOptions {
-        kotlinCompilerExtensionVersion '1.5.1'
+        kotlinCompilerExtensionVersion = '1.5.1'
     }
 
     // Prevent compression of model files

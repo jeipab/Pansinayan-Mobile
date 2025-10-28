@@ -1,0 +1,20 @@
+{
+  "gloss_labels": [
+    "GOOD MORNING",
+    "GOOD AFTERNOON",
+    "GOOD EVENING",
+    "HELLO",
+    "HOW ARE YOU",
+    "IM FINE",
+    "NICE TO MEET YOU",
+    "THANK YOU",
+    "YOURE WELCOME",
+    "SEE YOU TOMORROW"
+  ],
+  "category_labels": [
+    "GREETING"
+  ],
+  "version": "greetings_v2"
+}
+
+

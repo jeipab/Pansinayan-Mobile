@@ -72,15 +72,8 @@ class TFLiteModelRunner(
             val modelBuffer = loadModelFile()
             val options = Interpreter.Options()
 
-            // Try to use GPU delegate for faster inference
-            try {
-                gpuDelegate = GpuDelegate()
-                options.addDelegate(gpuDelegate)
-                Log.i(TAG, "GPU delegate enabled for TensorFlow Lite")
-            } catch (e: Exception) {
-                Log.w(TAG, "GPU delegate not available, using CPU threads instead", e)
-                options.setNumThreads(4)
-            }
+            // Default to CPU for broad compatibility
+            options.setNumThreads(4)
 
             interpreter = Interpreter(modelBuffer, options)
             Log.i(TAG, "TFLite classification model loaded successfully: $modelPath")
