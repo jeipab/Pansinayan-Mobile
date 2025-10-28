@@ -285,6 +285,9 @@ class MainActivity : AppCompatActivity() {
         statsCard.visibility = if (debugModeEnabled) View.VISIBLE else View.GONE
         debugInfoCard.visibility = if (debugModeEnabled) View.VISIBLE else View.GONE
         overlayView.setDebugMode(debugModeEnabled)
+        if (::recognitionPipeline.isInitialized) {
+            recognitionPipeline.setDebugLogging(debugModeEnabled)
+        }
         
         val status = if (debugModeEnabled) "enabled" else "disabled"
         Toast.makeText(this, "Debug mode $status", Toast.LENGTH_SHORT).show()

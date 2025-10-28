@@ -122,6 +122,7 @@ class MediaPipeProcessor(
     
     // Temporal filtering buffer for hand-face occlusion detection
     private val occlusionHistory = ArrayDeque<Boolean>(TEMPORAL_WINDOW_SIZE)
+    private val occlusionLock = Any()
 
     init {
         setupLandmarkers()
@@ -188,8 +189,9 @@ class MediaPipeProcessor(
                 Bitmap.Config.ARGB_8888
             )
             
-            imageProxy.use { bitmapBuffer.copyPixelsFromBuffer(imageProxy.planes[0].buffer) }
-            imageProxy.close()
+            imageProxy.use { img ->
+                bitmapBuffer.copyPixelsFromBuffer(img.planes[0].buffer)
+            }
 
             val matrix = Matrix().apply {
                 postRotate(imageProxy.imageInfo.rotationDegrees.toFloat())
@@ -473,40 +475,22 @@ class MediaPipeProcessor(
      * Requires TEMPORAL_THRESHOLD out of TEMPORAL_WINDOW_SIZE frames to confirm.
      */
     private fun applyTemporalFilter(currentDetection: Boolean): Boolean {
-        occlusionHistory.addLast(currentDetection)
-        if (occlusionHistory.size > TEMPORAL_WINDOW_SIZE) {
-            occlusionHistory.removeFirst()
+        synchronized(occlusionLock) {
+            occlusionHistory.addLast(currentDetection)
+            if (occlusionHistory.size > TEMPORAL_WINDOW_SIZE) {
+                occlusionHistory.removeFirst()
+            }
+
+            // Need full window for reliable detection
+            if (occlusionHistory.size < TEMPORAL_WINDOW_SIZE) return false
+
+            // Count detections in window without creating an external iterator
+            var detectionCount = 0
+            for (value in occlusionHistory) if (value) detectionCount++
+            return detectionCount >= TEMPORAL_THRESHOLD
         }
-        
-        // Need full window for reliable detection
-        if (occlusionHistory.size < TEMPORAL_WINDOW_SIZE) return false
-        
-        // Count detections in window
-        val detectionCount = occlusionHistory.count { it }
-        return detectionCount >= TEMPORAL_THRESHOLD
     }
     
-    /**
-     * Legacy occlusion detection (deprecated - detects missing body parts, not hand-face occlusion).
-     * 
-     * @deprecated Use detectHandFaceOcclusion() instead for sign language occlusion detection.
-     */
-    @Deprecated("Use detectHandFaceOcclusion() - this detects missing keypoints, not actual occlusion")
-    fun detectOcclusion(keypoints: FloatArray): Boolean {
-        if (keypoints.size < 178) return false
-        
-        val criticalIndices = listOf(11, 12, 13, 14, 15, 16, 25, 26, 46, 47)
-        
-        var occludedCount = 0
-        for (i in criticalIndices) {
-            if (i * 2 + 1 >= keypoints.size) continue
-            val x = keypoints[i * 2]
-            val y = keypoints[i * 2 + 1]
-            if (x == 0f && y == 0f) occludedCount++
-        }
-        
-        return occludedCount > 5
-    }
 
     fun release() {
         handLandmarker?.close()

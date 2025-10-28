@@ -64,6 +64,7 @@ class RecognitionPipeline(
     private lateinit var labelMapper: LabelMapper
     private var totalInferenceTimeMs: Long = 0L
     private var inferenceCount: Long = 0L
+    private var debugLogging: Boolean = false
 
     // Coroutine scope for async operations
     private val pipelineScope = CoroutineScope(Dispatchers.Default + SupervisorJob())
@@ -149,6 +150,10 @@ class RecognitionPipeline(
         startHealthMonitor()
     }
 
+    fun setDebugLogging(enabled: Boolean) {
+        debugLogging = enabled
+    }
+
     private fun processFrame(imageProxy: ImageProxy) {
         lastFrameTime.set(System.currentTimeMillis())
         
@@ -210,6 +215,32 @@ class RecognitionPipeline(
             totalInferenceTimeMs += infMs
             inferenceCount += 1
             val logProbs = outputs.logProbs[0] // [T, num_ctc]
+
+            if (debugLogging) {
+                // Compute per-frame argmax IDs (including blank) to verify output dynamics
+                val T = logProbs.size
+                if (T > 0) {
+                    val arg = IntArray(T) { t ->
+                        var a = 0
+                        var m = logProbs[t][0]
+                        for (c in 1 until logProbs[t].size) {
+                            if (logProbs[t][c] > m) { m = logProbs[t][c]; a = c }
+                        }
+                        a
+                    }
+                    // Mode id over the window
+                    val counts = HashMap<Int, Int>()
+                    for (v in arg) counts[v] = (counts[v] ?: 0) + 1
+                    var modeId = arg[0]
+                    var modeCnt = 0
+                    for ((k, v) in counts) if (v > modeCnt) { modeCnt = v; modeId = k }
+                    val head = arg.take(minOf(20, arg.size)).joinToString(",")
+                    val tail = arg.takeLast(minOf(10, arg.size)).joinToString(",")
+                    val pct = (modeCnt * 100) / T
+                    Log.i(TAG, "CTC debug: mode=$modeId (${pct}%), blank=${ctcRunner.meta.blank_id}, head=[$head], tail=[$tail]")
+                }
+            }
+
             val tokens = CtcGreedyDecoder.decode(logProbs, ctcRunner.meta.blank_id)
 
             // Estimate absolute window start frame index
