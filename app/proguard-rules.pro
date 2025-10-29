@@ -13,20 +13,8 @@
 
 
 ########################################
-# ONNX Runtime ProGuard Rules
+# Removed ONNX runtime keeps (PyTorch-only runtime)
 ########################################
-
-# Keep all ONNX Runtime classes (uses JNI & reflection)
--keep class ai.onnxruntime.** { *; }
--dontwarn ai.onnxruntime.**
-
-# Keep native library loaders (important for .so loading)
--keep class com.microsoft.onnxruntime.** { *; }
--dontwarn com.microsoft.onnxruntime.**
-
-# Preserve model assets (ONNX models)
--keep class * extends java.io.InputStream { *; }
--keepattributes Signature
 
 ########################################
 # Gson (Reflection-based JSON parsing)
@@ -42,7 +30,5 @@
 -dontwarn com.google.mediapipe.**
 
 ########################################
-# TensorFlow Lite (optional for fallback)
+# Removed TensorFlow Lite keeps (no longer used)
 ########################################
--keep class org.tensorflow.** { *; }
--dontwarn org.tensorflow.**

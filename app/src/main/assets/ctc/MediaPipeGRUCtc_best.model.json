@@ -8,9 +8,7 @@
   "stride_hint": 40,
   "decode_default": "greedy",
   "model_type": "mediapipe_gru_ctc",
-  "labels_file": "labels/labels.json",
-  "version": "greetings_v2",
-  "labels_checksum": "29C1A909AD06A21C21C58FEF354F48EA79F85B2F094D676E886234272DEA53A4"
+  "labels_file": "label_mapping.json",
+  "version": "1.0.0",
+  "labels_checksum": null
 }
-
-

@@ -250,15 +250,15 @@ class MainActivity : AppCompatActivity() {
                 R.id.radio_transformer -> {
                     currentModel = "Transformer"
                     switchModel(
-                        tflitePath = "ctc/sign_transformer_ctc_fp16.tflite",
-                        metadataPath = "ctc/sign_transformer_ctc_fp16.model.json"
+                        ptPath = "ctc/SignTransformerCtc_best.pt",
+                        metadataPath = "ctc/SignTransformerCtc_best.model.json"
                     )
                 }
                 R.id.radio_gru -> {
                     currentModel = "GRU"
                     switchModel(
-                        tflitePath = "ctc/mediapipe_gru_ctc_fp16.tflite",
-                        metadataPath = "ctc/mediapipe_gru_ctc_fp16.model.json"
+                        ptPath = "ctc/MediaPipeGRUCtc_best.pt",
+                        metadataPath = "ctc/MediaPipeGRUCtc_best.model.json"
                     )
                 }
             }
@@ -294,11 +294,11 @@ class MainActivity : AppCompatActivity() {
         Log.i(TAG, "Debug mode $status")
     }
 
-    private fun switchModel(tflitePath: String, metadataPath: String) {
+    private fun switchModel(ptPath: String, metadataPath: String) {
         Toast.makeText(this, "Switching to $currentModel model...", Toast.LENGTH_SHORT).show()
-        Log.i(TAG, "Switching model to: tflite=$tflitePath meta=$metadataPath")
+        Log.i(TAG, "Switching model to: path=$ptPath meta=$metadataPath")
         if (::recognitionPipeline.isInitialized) {
-            recognitionPipeline.switchModel(tflitePath, metadataPath)
+            recognitionPipeline.switchModel(ptPath, metadataPath)
         }
     }
 

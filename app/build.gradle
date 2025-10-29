@@ -51,17 +51,12 @@ android {
 
     // Prevent compression of model files
     aaptOptions {
-        noCompress "tflite"
-        noCompress "onnx"
         noCompress "task"
+        noCompress "pt"
+        noCompress "ptl"
     }
     
-    // ONNX Runtime specific configuration
-    packagingOptions {
-        pickFirst '**/libc++_shared.so'
-        pickFirst '**/libjsc.so'
-        pickFirst '**/libonnxruntime.so'
-    }
+    // No ONNX/TFLite packaging rules needed for PyTorch-only setup
 }
 
 dependencies {
@@ -78,13 +73,8 @@ dependencies {
     implementation "androidx.camera:camera-lifecycle:${camerax_version}"
     implementation "androidx.camera:camera-view:${camerax_version}"
 
-    // ONNX Runtime (replacing TensorFlow Lite)
-    implementation 'com.microsoft.onnxruntime:onnxruntime-android:1.18.0'
-    
-    // TensorFlow Lite (keeping for compatibility)
-    implementation 'org.tensorflow:tensorflow-lite:2.14.0'
-    implementation 'org.tensorflow:tensorflow-lite-gpu:2.14.0'
-    implementation 'org.tensorflow:tensorflow-lite-support:0.4.4'
+    // PyTorch Mobile (full runtime for .pt models)
+    implementation 'org.pytorch:pytorch_android:2.1.0'
 
     // MediaPipe (Vision tasks for hand/pose detection)
     implementation 'com.google.mediapipe:tasks-vision:0.10.11'
@@ -122,10 +112,4 @@ dependencies {
     debugImplementation libs.androidx.ui.test.manifest
 }
 
-configurations.configureEach {
-    resolutionStrategy {
-        force 'org.tensorflow:tensorflow-lite:2.14.0'
-        force 'org.tensorflow:tensorflow-lite-gpu:2.14.0'
-        force 'org.tensorflow:tensorflow-lite-support:0.4.4'
-    }
-}
+// No TensorFlow Lite resolution strategy needed

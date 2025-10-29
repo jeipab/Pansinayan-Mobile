@@ -6,7 +6,7 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.google.gson.Gson
 import com.google.gson.annotations.SerializedName
 import com.fslr.pansinayan.inference.CtcGreedyDecoder
-import com.fslr.pansinayan.inference.CtcModelRunner
+import com.fslr.pansinayan.inference.PyTorchModelRunner
 import com.fslr.pansinayan.io.NpyNpzReader
 import com.fslr.pansinayan.recognition.CtcAggregator
 import org.junit.Assert.assertTrue
@@ -36,10 +36,10 @@ class CtcGoldenParityTest {
         val context = ApplicationProvider.getApplicationContext<Context>()
         val assetManager = context.assets
 
-        val runner = CtcModelRunner(
-            context,
-            tflitePath = "ctc/sign_transformer_ctc_fp16.tflite",
-            metadataPath = "ctc/sign_transformer_ctc_fp16.model.json"
+        val runner = PyTorchModelRunner(
+            context = context,
+            assetModelPath = "ctc/SignTransformerCtc_best.pt",
+            metadataPath = "ctc/SignTransformerCtc_best.model.json"
         )
         val blankId = runner.meta.blank_id
 

@@ -5,8 +5,10 @@ import android.util.Log
 import androidx.camera.core.ImageProxy
 import androidx.lifecycle.LifecycleOwner
 import com.fslr.pansinayan.camera.CameraManager
-import com.fslr.pansinayan.inference.CtcGreedyDecoder
-import com.fslr.pansinayan.inference.CtcModelRunner
+import com.fslr.pansinayan.inference.CTCDecoder
+import com.fslr.pansinayan.inference.ModelRunner
+import com.fslr.pansinayan.inference.PyTorchModelRunner
+import com.fslr.pansinayan.inference.PreprocessingUtils
 import com.fslr.pansinayan.inference.SequenceBufferManager
 import com.fslr.pansinayan.mediapipe.MediaPipeProcessor
 import com.fslr.pansinayan.utils.LabelMapper
@@ -19,7 +21,7 @@ import java.util.concurrent.atomic.AtomicLong
  * Orchestrates the complete recognition pipeline with health monitoring.
  * 
  * Pipeline flow:
- * Camera → MediaPipe → Buffer → TFLite → Temporal Logic → UI Callback
+ * Camera → MediaPipe → Buffer → PyTorch → Temporal Logic → UI Callback
  * 
  * Responsibilities:
  * - Coordinate all components
@@ -56,7 +58,7 @@ class RecognitionPipeline(
     private lateinit var cameraManager: CameraManager
     private lateinit var mediaPipeProcessor: MediaPipeProcessor
     private lateinit var bufferManager: SequenceBufferManager
-    private lateinit var ctcRunner: CtcModelRunner
+    private lateinit var ctcRunner: ModelRunner
     private lateinit var temporalRecognizer: TemporalRecognizer
     private lateinit var ctcAggregator: CtcAggregator
     private var ctcWindowSize: Int = 120
@@ -94,11 +96,13 @@ class RecognitionPipeline(
             cameraManager = CameraManager(context, lifecycleOwner, previewView, targetFps = 30)
             mediaPipeProcessor = MediaPipeProcessor(context, this)
 
-            // Initialize CTC model runner from assets/ctc (default to Transformer model)
-            ctcRunner = CtcModelRunner(
+            // Prefer PyTorch .pt if present; fallback to TFLite
+            // Strictly use PyTorch; fail fast if asset is missing
+            context.assets.open("ctc/SignTransformerCtc_best.pt").close()
+            ctcRunner = PyTorchModelRunner(
                 context = context,
-                tflitePath = "ctc/sign_transformer_ctc_fp16.tflite",
-                metadataPath = "ctc/sign_transformer_ctc_fp16.model.json"
+                assetModelPath = "ctc/SignTransformerCtc_best.pt",
+                metadataPath = "ctc/SignTransformerCtc_best.model.json"
             )
 
             ctcWindowSize = ctcRunner.meta.window_size_hint
@@ -210,7 +214,8 @@ class RecognitionPipeline(
 
         try {
             val startTime = System.currentTimeMillis()
-            val outputs = ctcRunner.run(windowSeq)
+            val clampedSeq = PreprocessingUtils.clamp01(windowSeq)
+            val outputs = ctcRunner.run(clampedSeq)
             val infMs = System.currentTimeMillis() - startTime
             totalInferenceTimeMs += infMs
             inferenceCount += 1
@@ -241,7 +246,7 @@ class RecognitionPipeline(
                 }
             }
 
-            val tokens = CtcGreedyDecoder.decode(logProbs, ctcRunner.meta.blank_id)
+            val tokens = CTCDecoder.greedy(logProbs, ctcRunner.meta.blank_id)
 
             // Estimate absolute window start frame index
             val windowStartAbs = currentFrame - windowSeq.size + 1
@@ -512,22 +517,24 @@ class RecognitionPipeline(
      * Blocks frame processing during swap, rebuilds buffer/aggregator from metadata hints,
      * warms up the new model, and then resumes.
      */
-    fun switchModel(tflitePath: String, metadataPath: String, preferGpu: Boolean = false) {
+    fun switchModel(ptPath: String, metadataPath: String, preferGpu: Boolean = false) {
         pipelineScope.launch(Dispatchers.IO) {
             try {
-                Log.i(TAG, "Switching CTC model to tflite=$tflitePath meta=$metadataPath ...")
+                Log.i(TAG, "Switching CTC model to path=$ptPath meta=$metadataPath ...")
                 // Pause processing
                 isPaused.set(true)
 
                 // Release previous runner
                 try { ctcRunner.release() } catch (_: Throwable) {}
 
-                // Instantiate new runner
-                ctcRunner = CtcModelRunner(
+                // Instantiate new runner (PyTorch only)
+                if (!(ptPath.endsWith(".pt") || ptPath.endsWith(".ptl"))) {
+                    throw IllegalArgumentException("PyTorch model path must end with .pt or .ptl")
+                }
+                ctcRunner = PyTorchModelRunner(
                     context = context,
-                    tflitePath = tflitePath,
-                    metadataPath = metadataPath,
-                    preferGpu = preferGpu
+                    assetModelPath = ptPath,
+                    metadataPath = metadataPath
                 )
 
                 // Update window/stride from new metadata
