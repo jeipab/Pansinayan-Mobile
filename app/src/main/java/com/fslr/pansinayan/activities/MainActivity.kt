@@ -258,15 +258,15 @@ class MainActivity : AppCompatActivity() {
                 R.id.radio_transformer -> {
                     currentModel = "Transformer"
                     switchModel(
-                        ptPath = "ctc/SignTransformerCtc_best.pt",
-                        metadataPath = "ctc/SignTransformerCtc_best.model.json"
+                        ptPath = "SignTransformerCtc_best.ptl",
+                        metadataPath = "SignTransformerCtc_best.model.json"
                     )
                 }
                 R.id.radio_gru -> {
                     currentModel = "GRU"
                     switchModel(
-                        ptPath = "ctc/MediaPipeGRUCtc_best.pt",
-                        metadataPath = "ctc/MediaPipeGRUCtc_best.model.json"
+                        ptPath = "MediaPipeGRUCtc_best.ptl",
+                        metadataPath = "MediaPipeGRUCtc_best.model.json"
                     )
                 }
             }

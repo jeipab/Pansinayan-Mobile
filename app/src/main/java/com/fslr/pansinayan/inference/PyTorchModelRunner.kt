@@ -13,7 +13,7 @@ import java.nio.ByteOrder
 
 class PyTorchModelRunner(
 	private val context: Context,
-	private val assetModelPath: String, // e.g., "ctc/sign_transformer_ctc_mobile.ptl" or ".pt"
+	private val assetModelPath: String, // e.g., "SignTransformerCtc_best.ptl"
 	private val metadataPath: String
 ) : ModelRunner {
 

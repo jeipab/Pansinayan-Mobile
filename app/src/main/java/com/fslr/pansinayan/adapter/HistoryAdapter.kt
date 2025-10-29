@@ -45,13 +45,20 @@ class HistoryAdapter : RecyclerView.Adapter<HistoryAdapter.HistoryViewHolder>() 
     inner class HistoryViewHolder(itemView: View) : RecyclerView.ViewHolder(itemView) {
         private val tvGlossLabel: TextView = itemView.findViewById(R.id.tv_gloss_label)
         private val tvCategoryLabel: TextView = itemView.findViewById(R.id.tv_category_label)
+        private val tvGlossConfidence: TextView = itemView.findViewById(R.id.tv_gloss_confidence)
+        private val tvCategoryConfidence: TextView = itemView.findViewById(R.id.tv_category_confidence)
         private val tvTimestamp: TextView = itemView.findViewById(R.id.tv_timestamp)
         private val tvModel: TextView = itemView.findViewById(R.id.tv_model)
         private val tvOcclusion: TextView = itemView.findViewById(R.id.tv_occlusion)
 
         fun bind(history: RecognitionHistory) {
             tvGlossLabel.text = history.glossLabel
-            tvCategoryLabel.text = "Category: ${history.categoryLabel}"
+            tvCategoryLabel.text = history.categoryLabel
+            
+            // Format confidence as percentage
+            tvGlossConfidence.text = String.format(Locale.getDefault(), "%.1f%%", history.glossConfidence * 100)
+            tvCategoryConfidence.text = String.format(Locale.getDefault(), "%.1f%%", history.categoryConfidence * 100)
+            
             tvTimestamp.text = dateFormat.format(Date(history.timestamp))
             tvModel.text = history.modelUsed
 

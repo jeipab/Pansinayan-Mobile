@@ -28,19 +28,27 @@
         android:id="@+id/tab_layout"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:background="@android:color/white"
+        android:background="#F5F5F5"
         app:tabMode="fixed"
-        app:tabGravity="fill">
+        app:tabGravity="fill"
+        app:tabTextColor="#666666"
+        app:tabSelectedTextColor="#1976D2"
+        app:tabIndicatorColor="#1976D2"
+        app:tabIndicatorHeight="3dp"
+        app:tabTextAppearance="@android:style/TextAppearance.Medium"
+        app:tabPaddingStart="16dp"
+        app:tabPaddingEnd="16dp"
+        app:tabMinWidth="0dp">
 
         <com.google.android.material.tabs.TabItem
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="All" />
+            android:text="ALL" />
 
         <com.google.android.material.tabs.TabItem
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="Transformer" />
+            android:text="TRANSFORMER" />
 
         <com.google.android.material.tabs.TabItem
             android:layout_width="wrap_content"

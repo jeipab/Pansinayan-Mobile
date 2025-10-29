@@ -96,13 +96,12 @@ class RecognitionPipeline(
             cameraManager = CameraManager(context, lifecycleOwner, previewView, targetFps = 30)
             mediaPipeProcessor = MediaPipeProcessor(context, this)
 
-            // Prefer PyTorch .pt if present; fallback to TFLite
-            // Strictly use PyTorch; fail fast if asset is missing
-            context.assets.open("ctc/SignTransformerCtc_best.pt").close()
+            // Strictly use PyTorch Lite; fail fast if asset is missing
+            context.assets.open("SignTransformerCtc_best.ptl").close()
             ctcRunner = PyTorchModelRunner(
                 context = context,
-                assetModelPath = "ctc/SignTransformerCtc_best.pt",
-                metadataPath = "ctc/SignTransformerCtc_best.model.json"
+                assetModelPath = "SignTransformerCtc_best.ptl",
+                metadataPath = "SignTransformerCtc_best.model.json"
             )
 
             ctcWindowSize = ctcRunner.meta.window_size_hint

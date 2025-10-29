@@ -38,8 +38,8 @@ class CtcGoldenParityTest {
 
         val runner = PyTorchModelRunner(
             context = context,
-            assetModelPath = "ctc/SignTransformerCtc_best.pt",
-            metadataPath = "ctc/SignTransformerCtc_best.model.json"
+            assetModelPath = "SignTransformerCtc_best.ptl",
+            metadataPath = "SignTransformerCtc_best.model.json"
         )
         val blankId = runner.meta.blank_id
 

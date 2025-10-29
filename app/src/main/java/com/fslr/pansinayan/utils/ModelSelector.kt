@@ -20,11 +20,11 @@ class ModelSelector(private val context: Context) {
         private const val PREFS_NAME = "model_selector_prefs"
         private const val KEY_SELECTED_MODEL = "selected_model"
         
-        // CTC model file paths in assets (PyTorch only)
-        const val TRANSFORMER_MODEL_PATH = "ctc/SignTransformerCtc_best.pt"
-        const val MEDIAPIPE_GRU_MODEL_PATH = "ctc/MediaPipeGRUCtc_best.pt"
-        const val TRANSFORMER_META_PATH = "ctc/SignTransformerCtc_best.model.json"
-        const val MEDIAPIPE_GRU_META_PATH = "ctc/MediaPipeGRUCtc_best.model.json"
+        // CTC model file paths in assets (PyTorch Lite only)
+        const val TRANSFORMER_MODEL_PATH = "SignTransformerCtc_best.ptl"
+        const val MEDIAPIPE_GRU_MODEL_PATH = "MediaPipeGRUCtc_best.ptl"
+        const val TRANSFORMER_META_PATH = "SignTransformerCtc_best.model.json"
+        const val MEDIAPIPE_GRU_META_PATH = "MediaPipeGRUCtc_best.model.json"
         
         // Default model selection
         val DEFAULT_MODEL = ModelType.TRANSFORMER
@@ -45,7 +45,7 @@ class ModelSelector(private val context: Context) {
             modelPath = TRANSFORMER_MODEL_PATH,
             metadataPath = TRANSFORMER_META_PATH,
             description = "PyTorch Transformer encoder CTC.",
-            estimatedSize = "~1.5 MB",
+            estimatedSize = "~73 MB",
             estimatedLatency = "150-250ms",
             accuracy = "★★★★★",
             isRecommended = true
@@ -56,7 +56,7 @@ class ModelSelector(private val context: Context) {
             modelPath = MEDIAPIPE_GRU_MODEL_PATH,
             metadataPath = MEDIAPIPE_GRU_META_PATH,
             description = "PyTorch GRU baseline CTC.",
-            estimatedSize = "~500 KB",
+            estimatedSize = "~10 MB",
             estimatedLatency = "50-100ms",
             accuracy = "★★★★☆",
             isRecommended = false
