@@ -63,8 +63,6 @@ class MainActivity : AppCompatActivity() {
 
     // UI Components (bind these in onCreate after setContentView)
     private lateinit var previewView: PreviewView
-    private lateinit var resultTextView: TextView
-    private lateinit var confidenceTextView: TextView
     private lateinit var transcriptTextView: TextView
     private lateinit var statsTextView: TextView
     private lateinit var debugInfoTextView: TextView
@@ -75,6 +73,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var skeletonToggle: SwitchMaterial
     private lateinit var fabRecord: FloatingActionButton
     private lateinit var fabSwitchCamera: FloatingActionButton
+    private lateinit var fabHistory: FloatingActionButton
     private lateinit var fabBack: FloatingActionButton
     private lateinit var radioModelSelection: RadioGroup
     
@@ -146,18 +145,26 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    // Transcript history (keep small for on-screen display)
-    private val transcript = mutableListOf<RecognizedSign>()
-    private val maxTranscriptLength = 5
+    // Current prediction (single most recent recognition)
+    private var currentPrediction: RecognizedSign? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
         
+        // Handle back button using OnBackPressedDispatcher
+        onBackPressedDispatcher.addCallback(this, object : androidx.activity.OnBackPressedCallback(true) {
+            override fun handleOnBackPressed() {
+                // Return to home instead of exiting app
+                val intent = Intent(this@MainActivity, HomeActivity::class.java)
+                intent.flags = Intent.FLAG_ACTIVITY_CLEAR_TOP
+                startActivity(intent)
+                finish()
+            }
+        })
+        
         // Bind UI components
         previewView = findViewById(R.id.preview_view)
-        resultTextView = findViewById(R.id.result_text)
-        confidenceTextView = findViewById(R.id.confidence_text)
         transcriptTextView = findViewById(R.id.transcript_text)
         statsTextView = findViewById(R.id.stats_text)
         debugInfoTextView = findViewById(R.id.debug_info_text)
@@ -168,6 +175,7 @@ class MainActivity : AppCompatActivity() {
         skeletonToggle = findViewById(R.id.toggle_skeleton)
         fabRecord = findViewById(R.id.fab_record)
         fabSwitchCamera = findViewById(R.id.fab_switch_camera)
+        fabHistory = findViewById(R.id.fab_history)
         fabBack = findViewById(R.id.fab_back)
         radioModelSelection = findViewById(R.id.radio_model_selection)
 
@@ -274,9 +282,16 @@ class MainActivity : AppCompatActivity() {
             switchCamera()
         }
 
+        // History button
+        fabHistory.setOnClickListener {
+            val intent = Intent(this, HistoryActivity::class.java)
+            startActivity(intent)
+        }
+
         // Back button
         fabBack.setOnClickListener {
-            onBackPressed()
+            // Trigger the OnBackPressedDispatcher callback we registered
+            onBackPressedDispatcher.onBackPressed()
         }
     }
 
@@ -341,7 +356,11 @@ class MainActivity : AppCompatActivity() {
         // Get display metrics from Activity
         val metrics = DisplayMetrics()
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            display?.getRealMetrics(metrics)
+            val windowMetrics = windowManager.currentWindowMetrics
+            val bounds = windowMetrics.bounds
+            metrics.widthPixels = bounds.width()
+            metrics.heightPixels = bounds.height()
+            metrics.densityDpi = resources.configuration.densityDpi
         } else {
             @Suppress("DEPRECATION")
             windowManager.defaultDisplay.getRealMetrics(metrics)
@@ -475,36 +494,19 @@ class MainActivity : AppCompatActivity() {
     private fun handleRecognizedSign(sign: RecognizedSign) {
         Log.i(TAG, "Recognized: ${sign.glossLabel} (${sign.categoryLabel}) - ${sign.confidence}")
 
-        // Update main result display with format: "GLOSS (CATEGORY)"
-        resultTextView.text = "${sign.glossLabel} (${sign.categoryLabel})"
-        confidenceTextView.text = String.format("%.1f%%", sign.confidence * 100)
+        // Update current prediction
+        currentPrediction = sign
 
-        // Update confidence color based on threshold
-        val confidenceColor = when {
-            sign.confidence >= 0.8f -> Color.GREEN
-            sign.confidence >= 0.6f -> Color.YELLOW
-            else -> Color.RED
-        }
-        confidenceTextView.setTextColor(confidenceColor)
+        // Update display to show current prediction
+        updateCurrentPredictionDisplay()
 
-        // Add to temporary transcript (for on-screen display)
-        transcript.add(sign)
-        if (transcript.size > maxTranscriptLength) {
-            transcript.removeAt(0)
-        }
-
-        // Update transcript display
-        updateTranscriptDisplay()
-
-        // Save to database
+        // Save to database (transcript/history)
         saveToDatabase(sign)
-
-        // Optional: Trigger animation or sound
-        animateRecognition()
     }
 
     /**
-     * Save recognized sign to database.
+     * Save recognized sign to database (transcript/history).
+     * Stores timestamp, predicted gloss with confidence, predicted category with confidence.
      */
     private fun saveToDatabase(sign: RecognizedSign) {
         lifecycleScope.launch(Dispatchers.IO) {
@@ -512,12 +514,14 @@ class MainActivity : AppCompatActivity() {
                 val history = RecognitionHistory(
                     timestamp = sign.timestamp,
                     glossLabel = sign.glossLabel,
+                    glossConfidence = sign.confidence,
                     categoryLabel = sign.categoryLabel,
+                    categoryConfidence = sign.categoryConfidence,
                     occlusionStatus = if (occlusionIndicator.solidColor == Color.RED) "Occluded" else "Not Occluded",
                     modelUsed = currentModel
                 )
                 database.historyDao().insert(history)
-                Log.d(TAG, "Saved to database: ${sign.glossLabel} (${sign.categoryLabel})")
+                Log.d(TAG, "Saved to database: ${sign.glossLabel} (${String.format("%.1f%%", sign.confidence * 100)}) - ${sign.categoryLabel} (${String.format("%.1f%%", sign.categoryConfidence * 100)})")
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to save to database", e)
             }
@@ -525,28 +529,15 @@ class MainActivity : AppCompatActivity() {
     }
 
     /**
-     * Update transcript TextView with recent recognitions.
+     * Update display to show current prediction.
      */
-    private fun updateTranscriptDisplay() {
-        val dateFormat = SimpleDateFormat("HH:mm:ss", Locale.getDefault())
-        val transcriptText = transcript.joinToString("\n") { sign ->
-            val time = dateFormat.format(Date(sign.timestamp))
-            "$time - ${sign.glossLabel} (${sign.categoryLabel}) (${String.format("%.1f%%", sign.confidence * 100)})"
-        }
-        transcriptTextView.text = transcriptText
+    private fun updateCurrentPredictionDisplay() {
+        val predictionText = currentPrediction?.let { sign ->
+            "${sign.glossLabel} (${String.format("%.1f%%", sign.confidence * 100)})\n${sign.categoryLabel} (${String.format("%.1f%%", sign.categoryConfidence * 100)})"
+        } ?: "Gloss (Confidence)"
+        transcriptTextView.text = predictionText
     }
 
-    /**
-     * Animate recognition result (optional).
-     */
-    private fun animateRecognition() {
-        // TODO: Add fade-in animation or scale animation
-        resultTextView.animate()
-            .alpha(0f)
-            .alpha(1f)
-            .setDuration(300)
-            .start()
-    }
 
     /**
      * Start periodic stats updater (for debugging).
@@ -690,24 +681,16 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    override fun onBackPressed() {
-        super.onBackPressed()
-        // Return to home instead of exiting app
-        val intent = Intent(this, HomeActivity::class.java)
-        intent.flags = Intent.FLAG_ACTIVITY_CLEAR_TOP
-        startActivity(intent)
-        finish()
-    }
 
     // ================== UI Actions (Optional) ==================
 
     /**
-     * Clear transcript history.
+     * Clear current prediction display.
      */
-    private fun clearTranscript() {
-        transcript.clear()
-        transcriptTextView.text = ""
-        Log.i(TAG, "Transcript cleared")
+    private fun clearCurrentPrediction() {
+        currentPrediction = null
+        transcriptTextView.text = "Gloss (Confidence)"
+        Log.i(TAG, "Current prediction cleared")
     }
 
     /**

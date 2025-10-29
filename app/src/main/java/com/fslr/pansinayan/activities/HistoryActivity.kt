@@ -7,6 +7,7 @@ import android.os.Bundle
 import android.util.Log
 import android.widget.Button
 import android.widget.Toast
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.widget.Toolbar
@@ -37,7 +38,6 @@ class HistoryActivity : AppCompatActivity() {
 
     companion object {
         private const val TAG = "HistoryActivity"
-        private const val CREATE_CSV_REQUEST = 1001
     }
 
     private lateinit var database: AppDatabase
@@ -49,6 +49,16 @@ class HistoryActivity : AppCompatActivity() {
     private lateinit var toolbar: Toolbar
 
     private var currentFilter = "All"
+    private var pendingCsvContent: String? = null
+    
+    private val createDocumentLauncher = registerForActivityResult(
+        ActivityResultContracts.CreateDocument("text/csv")
+    ) { uri: Uri? ->
+        uri?.let {
+            writeCSVToUri(it, pendingCsvContent ?: "")
+            pendingCsvContent = null
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -120,11 +130,6 @@ class HistoryActivity : AppCompatActivity() {
             try {
                 Log.d(TAG, "Loading history from database...")
                 val historyDao = database.historyDao()
-                if (historyDao == null) {
-                    Log.e(TAG, "HistoryDao is null")
-                    return@launch
-                }
-
                 val history = historyDao.getAllHistory()
                 Log.d(TAG, "Retrieved ${history.size} history items")
 
@@ -209,16 +214,9 @@ class HistoryActivity : AppCompatActivity() {
 
                 // Launch file picker to save CSV
                 withContext(Dispatchers.Main) {
-                    val intent = Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
-                        addCategory(Intent.CATEGORY_OPENABLE)
-                        type = "text/csv"
-                        val timestamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(Date())
-                        putExtra(Intent.EXTRA_TITLE, "recognition_history_$timestamp.csv")
-                    }
-                    startActivityForResult(intent, CREATE_CSV_REQUEST)
-                    
-                    // Store CSV content temporarily
+                    val timestamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(Date())
                     pendingCsvContent = csvContent
+                    createDocumentLauncher.launch("recognition_history_$timestamp.csv")
                 }
 
             } catch (e: Exception) {
@@ -230,18 +228,6 @@ class HistoryActivity : AppCompatActivity() {
         }
     }
 
-    private var pendingCsvContent: String? = null
-
-    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
-        super.onActivityResult(requestCode, resultCode, data)
-        
-        if (requestCode == CREATE_CSV_REQUEST && resultCode == RESULT_OK) {
-            data?.data?.let { uri ->
-                writeCSVToUri(uri, pendingCsvContent ?: "")
-                pendingCsvContent = null
-            }
-        }
-    }
 
     /**
      * Build CSV content from history list.

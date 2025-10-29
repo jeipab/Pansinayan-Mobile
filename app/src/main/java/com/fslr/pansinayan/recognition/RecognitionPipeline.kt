@@ -256,6 +256,7 @@ class RecognitionPipeline(
                 for (tk in newOnes) {
                     val glossLabel = labelMapper.getGlossLabel(tk.id)
                     var categoryId = 0
+                    var categoryConfidence = 0f
                     outputs.catLogits?.let { cat ->
                         // Average logits over token span and argmax
                         val twoD = cat[0] // [T, num_cat]
@@ -276,6 +277,14 @@ class RecognitionPipeline(
                                 var best = avg[0]
                                 for (c in 1 until avg.size) if (avg[c] > best) { best = avg[c]; arg = c }
                                 categoryId = arg
+                                
+                                // Calculate category confidence using softmax
+                                val maxLogit = avg.maxOrNull() ?: 0f
+                                var expSum = 0f
+                                for (c in avg.indices) {
+                                    expSum += kotlin.math.exp(avg[c] - maxLogit)
+                                }
+                                categoryConfidence = kotlin.math.exp(avg[categoryId] - maxLogit) / expSum
                             }
                         }
                     }
@@ -286,6 +295,7 @@ class RecognitionPipeline(
                         categoryId = categoryId,
                         categoryLabel = categoryLabel,
                         confidence = tk.confidence,
+                        categoryConfidence = categoryConfidence,
                         timestamp = System.currentTimeMillis()
                     )
                     withContext(Dispatchers.Main) { onSignRecognized(recognizedSign) }
@@ -635,7 +645,8 @@ data class RecognizedSign(
     val glossLabel: String,
     val categoryId: Int,
     val categoryLabel: String,
-    val confidence: Float,
+    val confidence: Float,  // Gloss confidence
+    val categoryConfidence: Float,  // Category confidence
     val timestamp: Long
 )
 

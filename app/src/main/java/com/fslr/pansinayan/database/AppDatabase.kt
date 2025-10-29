@@ -14,7 +14,7 @@ import androidx.room.RoomDatabase
  *   val db = AppDatabase.getDatabase(context)
  *   val historyDao = db.historyDao()
  */
-@Database(entities = [RecognitionHistory::class], version = 1, exportSchema = false)
+@Database(entities = [RecognitionHistory::class], version = 2, exportSchema = false)
 abstract class AppDatabase : RoomDatabase() {
     abstract fun historyDao(): HistoryDao
 
@@ -31,7 +31,9 @@ abstract class AppDatabase : RoomDatabase() {
                     context.applicationContext,
                     AppDatabase::class.java,
                     "slr_history_database"
-                ).build()
+                )
+                    .fallbackToDestructiveMigration() // For development - clears database on schema change
+                    .build()
                 INSTANCE = instance
                 instance
             }

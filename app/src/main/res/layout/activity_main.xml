@@ -41,46 +41,6 @@
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintTop_toTopOf="parent" />
 
-    <!-- Recognition Result Overlay (Top Left, below model selection) -->
-    <androidx.cardview.widget.CardView
-        android:id="@+id/result_card"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:layout_marginStart="16dp"
-        android:layout_marginTop="8dp"
-        app:cardCornerRadius="8dp"
-        app:cardElevation="0dp"
-        app:cardBackgroundColor="#CC000000"
-        app:layout_constraintTop_toBottomOf="@id/radio_model_selection"
-        app:layout_constraintStart_toStartOf="parent">
-
-        <LinearLayout
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:orientation="horizontal"
-            android:padding="12dp"
-            android:gravity="center_vertical">
-
-            <TextView
-                android:id="@+id/result_text"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="Ready..."
-                android:textSize="16sp"
-                android:textStyle="bold"
-                android:textColor="@android:color/white" />
-
-            <TextView
-                android:id="@+id/confidence_text"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_marginStart="8dp"
-                android:text="0.0%"
-                android:textSize="16sp"
-                android:textColor="@android:color/white" />
-        </LinearLayout>
-    </androidx.cardview.widget.CardView>
-
     <!-- Debug Info Card (Bottom Left, above skeleton toggle) -->
     <androidx.cardview.widget.CardView
         android:id="@+id/debug_info_card"
@@ -185,7 +145,7 @@
         app:layout_constraintEnd_toEndOf="@id/fab_record"
         app:layout_constraintStart_toStartOf="@id/fab_record" />
 
-    <!-- Back Button (FAB - Bottom Right, above switch camera button) -->
+    <!-- Back Button (FAB - Bottom Right, topmost) -->
     <com.google.android.material.floatingactionbutton.FloatingActionButton
         android:id="@+id/fab_back"
         android:layout_width="wrap_content"
@@ -193,6 +153,20 @@
         android:layout_marginBottom="15dp"
         android:contentDescription="Back"
         android:src="@drawable/ic_back"
+        app:backgroundTint="@color/primary_blue"
+        app:tint="@android:color/white"
+        app:layout_constraintBottom_toTopOf="@id/fab_history"
+        app:layout_constraintEnd_toEndOf="@id/fab_history"
+        app:layout_constraintStart_toStartOf="@id/fab_history" />
+
+    <!-- History Button (FAB - Bottom Right, between back and switch camera) -->
+    <com.google.android.material.floatingactionbutton.FloatingActionButton
+        android:id="@+id/fab_history"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginBottom="15dp"
+        android:contentDescription="View History"
+        android:src="@drawable/ic_history"
         app:backgroundTint="@color/primary_blue"
         app:tint="@android:color/white"
         app:layout_constraintBottom_toTopOf="@id/fab_switch_camera"
@@ -222,7 +196,7 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:padding="12dp"
-                android:text="Gloss (Category)"
+                android:text="Gloss (Confidence)"
                 android:gravity="center"
                 android:textSize="14sp"
                 android:textColor="@android:color/white"

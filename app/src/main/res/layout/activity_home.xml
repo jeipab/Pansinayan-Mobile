@@ -39,7 +39,7 @@
         android:textSize="18sp"
         android:textAllCaps="false"
         app:cornerRadius="30dp"
-        app:icon="@android:drawable/ic_menu_camera"
+        app:icon="@drawable/ic_camera_white"
         app:iconGravity="textStart"
         app:iconPadding="8dp" />
 
@@ -53,7 +53,7 @@
         android:textSize="18sp"
         android:textAllCaps="false"
         app:cornerRadius="30dp"
-        app:icon="@android:drawable/ic_menu_recent_history"
+        app:icon="@drawable/ic_history_blue"
         app:iconGravity="textStart"
         app:iconPadding="8dp"
         style="@style/Widget.MaterialComponents.Button.OutlinedButton" />

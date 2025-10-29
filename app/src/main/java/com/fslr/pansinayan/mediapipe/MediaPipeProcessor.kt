@@ -297,6 +297,9 @@ class MediaPipeProcessor(
 
         // Hand landmarks
         val handLandmarks = latestHandResult?.landmarks() ?: emptyList()
+        // Note: handednesses() is deprecated but there's no replacement API available in the current MediaPipe version
+        // We suppress the deprecation warning since we must use this API to determine left/right hand classification
+        @Suppress("DEPRECATION")
         val handedness = latestHandResult?.handednesses() ?: emptyList()
         
         var leftHandLandmarks: List<com.google.mediapipe.tasks.components.containers.NormalizedLandmark>? = null
