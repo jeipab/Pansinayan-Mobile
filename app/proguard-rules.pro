@@ -32,3 +32,21 @@
 ########################################
 # Removed TensorFlow Lite keeps (no longer used)
 ########################################
+
+########################################
+# Strip Android logs in release (no-ops for Log.*)
+########################################
+-assumenosideeffects class android.util.Log {
+    public static int v(java.lang.String, java.lang.String);
+    public static int v(java.lang.String, java.lang.String, java.lang.Throwable);
+    public static int d(java.lang.String, java.lang.String);
+    public static int d(java.lang.String, java.lang.String, java.lang.Throwable);
+    public static int i(java.lang.String, java.lang.String);
+    public static int i(java.lang.String, java.lang.String, java.lang.Throwable);
+    public static int w(java.lang.String, java.lang.String);
+    public static int w(java.lang.String, java.lang.String, java.lang.Throwable);
+    public static int e(java.lang.String, java.lang.String);
+    public static int e(java.lang.String, java.lang.String, java.lang.Throwable);
+    public static int wtf(java.lang.String, java.lang.String);
+    public static int wtf(java.lang.String, java.lang.String, java.lang.Throwable);
+}
