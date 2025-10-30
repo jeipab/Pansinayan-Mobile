@@ -26,7 +26,8 @@ android {
 
     buildTypes {
         release {
-            minifyEnabled false
+            minifyEnabled true
+            shrinkResources true
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
         }
     }
@@ -57,6 +58,13 @@ android {
     }
     
     // No ONNX/TFLite packaging rules needed for PyTorch-only setup
+
+    // Enable density splits to reduce APK size by delivering only needed densities
+    splits {
+        density {
+            enable true
+        }
+    }
 }
 
 dependencies {

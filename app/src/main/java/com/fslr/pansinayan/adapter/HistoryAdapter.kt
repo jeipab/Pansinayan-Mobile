@@ -5,6 +5,8 @@ import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import android.widget.TextView
+import androidx.recyclerview.widget.DiffUtil
+import androidx.recyclerview.widget.ListAdapter
 import androidx.recyclerview.widget.RecyclerView
 import com.fslr.pansinayan.R
 import com.fslr.pansinayan.database.RecognitionHistory
@@ -14,18 +16,9 @@ import java.util.*
 /**
  * RecyclerView adapter for displaying recognition history.
  */
-class HistoryAdapter : RecyclerView.Adapter<HistoryAdapter.HistoryViewHolder>() {
+class HistoryAdapter : ListAdapter<RecognitionHistory, HistoryAdapter.HistoryViewHolder>(DIFF_CALLBACK) {
 
-    private var historyList: List<RecognitionHistory> = emptyList()
     private val dateFormat = SimpleDateFormat("MMM dd, HH:mm:ss", Locale.getDefault())
-
-    /**
-     * Update the history list and refresh the view.
-     */
-    fun submitList(newList: List<RecognitionHistory>) {
-        historyList = newList
-        notifyDataSetChanged()
-    }
 
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): HistoryViewHolder {
         val view = LayoutInflater.from(parent.context)
@@ -34,10 +27,8 @@ class HistoryAdapter : RecyclerView.Adapter<HistoryAdapter.HistoryViewHolder>() 
     }
 
     override fun onBindViewHolder(holder: HistoryViewHolder, position: Int) {
-        holder.bind(historyList[position])
+        holder.bind(getItem(position))
     }
-
-    override fun getItemCount(): Int = historyList.size
 
     /**
      * ViewHolder for history items.
@@ -67,6 +58,18 @@ class HistoryAdapter : RecyclerView.Adapter<HistoryAdapter.HistoryViewHolder>() 
             tvOcclusion.setTextColor(
                 if (history.occlusionStatus == "Occluded") Color.RED else Color.GREEN
             )
+        }
+    }
+
+    companion object {
+        private val DIFF_CALLBACK = object : DiffUtil.ItemCallback<RecognitionHistory>() {
+            override fun areItemsTheSame(oldItem: RecognitionHistory, newItem: RecognitionHistory): Boolean {
+                return oldItem.id == newItem.id
+            }
+
+            override fun areContentsTheSame(oldItem: RecognitionHistory, newItem: RecognitionHistory): Boolean {
+                return oldItem == newItem
+            }
         }
     }
 }
