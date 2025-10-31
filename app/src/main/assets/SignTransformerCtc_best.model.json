@@ -1,9 +1,9 @@
 {
   "input_dim": 178,
-  "num_gloss": 10,
-  "blank_id": 10,
-  "num_ctc": 11,
-  "num_cat": 1,
+  "num_gloss": 105,
+  "blank_id": 105,
+  "num_ctc": 106,
+  "num_cat": 10,
   "window_size_hint": 120,
   "stride_hint": 40,
   "decode_default": "greedy",
