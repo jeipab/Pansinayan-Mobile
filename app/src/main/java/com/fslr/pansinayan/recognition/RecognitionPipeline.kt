@@ -259,9 +259,12 @@ class RecognitionPipeline(
                     outputs.catLogits?.let { cat ->
                         // Average logits over token span and argmax
                         val twoD = cat[0] // [T, num_cat]
-                        val startT = maxOf(0, tk.startT)
-                        val endT = minOf(twoD.size - 1, tk.endT)
-                        if (endT >= startT && twoD.isNotEmpty()) {
+                        
+                        // ✅ FIX: Convert absolute indices to window-relative indices
+                        val startT = maxOf(0, tk.startT - windowStartAbs)
+                        val endT = minOf(twoD.size - 1, tk.endT - windowStartAbs)
+                        
+                        if (endT >= startT && startT >= 0 && endT < twoD.size) {
                             val numCat = twoD[0].size
                             val avg = FloatArray(numCat) { 0f }
                             var count = 0
@@ -285,6 +288,8 @@ class RecognitionPipeline(
                                 }
                                 categoryConfidence = kotlin.math.exp(avg[categoryId] - maxLogit) / expSum
                             }
+                        } else {
+                            Log.w(TAG, "Token span [${tk.startT}-${tk.endT}] outside window [${windowStartAbs}-${windowStartAbs + twoD.size - 1}]")
                         }
                     }
                     val categoryLabel = labelMapper.getCategoryLabel(categoryId)
@@ -298,7 +303,9 @@ class RecognitionPipeline(
                         timestamp = System.currentTimeMillis()
                     )
                     withContext(Dispatchers.Main) { onSignRecognized(recognizedSign) }
-                    Log.i(TAG, "CTC token: ${tk.id} $glossLabel conf=${"%.2f".format(tk.confidence)} frames=[${tk.startT}-${tk.endT}]")
+                    val catConfStr = "%.2f".format(categoryConfidence)
+                    val glossConfStr = "%.2f".format(tk.confidence)
+                    Log.i(TAG, "CTC token: ${tk.id} $glossLabel (cat: $categoryId $categoryLabel $catConfStr) conf=$glossConfStr frames=[${tk.startT}-${tk.endT}]")
                 }
             }
         } catch (e: Exception) {
