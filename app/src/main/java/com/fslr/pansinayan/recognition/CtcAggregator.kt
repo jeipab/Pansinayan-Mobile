@@ -8,10 +8,11 @@ data class AggregatedToken(
 	val id: Int,
 	var startT: Int,
 	var endT: Int,
-	var confidence: Float
+	var confidence: Float,
+	var appearanceCount: Int = 1
 )
 
-class CtcAggregator(private val iouThreshold: Float = 0.5f) {
+class CtcAggregator(private val iouThreshold: Float = 0.5f, private val stabilityThreshold: Int = 2) {
 	private val tokens = mutableListOf<AggregatedToken>()
 	private val newlyAdded = mutableListOf<AggregatedToken>()
 
@@ -29,14 +30,20 @@ class CtcAggregator(private val iouThreshold: Float = 0.5f) {
 			val matchIdx = findBestMatch(candidate)
 			if (matchIdx == -1) {
 				tokens.add(candidate)
-				newlyAdded.add(candidate)
+				if (candidate.appearanceCount >= stabilityThreshold) {
+				    newlyAdded.add(candidate)
+				}
 			} else {
 				val existing = tokens[matchIdx]
+				existing.appearanceCount += 1
 				if (candidate.confidence > existing.confidence) {
 					existing.startT = candidate.startT
 					existing.endT = candidate.endT
 					existing.confidence = candidate.confidence
 					// treat as updated; don't re-emit to avoid duplicates
+				}
+				if (existing.appearanceCount == stabilityThreshold) {
+				    newlyAdded.add(existing)
 				}
 			}
 		}

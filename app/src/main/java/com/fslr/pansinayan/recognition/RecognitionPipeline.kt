@@ -55,6 +55,8 @@ class RecognitionPipeline(
     }
 
     // Core components
+    private var lastRecognitionTime = 0L
+    private val RECOGNITION_COOLDOWN_MS = 500L
     private lateinit var cameraManager: CameraManager
     private lateinit var mediaPipeProcessor: MediaPipeProcessor
     private lateinit var bufferManager: SequenceBufferManager
@@ -62,7 +64,7 @@ class RecognitionPipeline(
     private lateinit var temporalRecognizer: TemporalRecognizer
     private lateinit var ctcAggregator: CtcAggregator
     private var ctcWindowSize: Int = 120
-    private var ctcStride: Int = 40
+    private var ctcStride: Int = 60
     private lateinit var labelMapper: LabelMapper
     private var totalInferenceTimeMs: Long = 0L
     private var inferenceCount: Long = 0L
@@ -107,7 +109,7 @@ class RecognitionPipeline(
             ctcWindowSize = ctcRunner.meta.window_size_hint
             ctcStride = ctcRunner.meta.stride_hint
             bufferManager = SequenceBufferManager(windowSize = ctcWindowSize, maxGap = 5)
-            ctcAggregator = CtcAggregator(iouThreshold = 0.5f)
+            ctcAggregator = CtcAggregator(iouThreshold = 0.5f, stabilityThreshold = 1)
             
             temporalRecognizer = TemporalRecognizer(
                 stabilityThreshold = 5,
@@ -204,6 +206,11 @@ class RecognitionPipeline(
      * Run inference if buffer has enough data.
      */
     private suspend fun runCtcIfReady(currentFrame: Int) {
+        val currentTime = System.currentTimeMillis()
+        if (currentTime - lastRecognitionTime < RECOGNITION_COOLDOWN_MS) {
+            return
+        }
+        
         val pop = bufferManager.popWindowIfReady(ctcStride) ?: return
         val (windowSeq, missingRatio) = pop
         if (missingRatio > 0.5f) {
@@ -247,9 +254,12 @@ class RecognitionPipeline(
 
             val tokens = CTCDecoder.greedy(logProbs, ctcRunner.meta.blank_id)
 
+            val CONFIDENCE_THRESHOLD = 0.65f
+            val filteredTokens = tokens.filter { it.confidence >= CONFIDENCE_THRESHOLD }
+
             // Estimate absolute window start frame index
             val windowStartAbs = currentFrame - windowSeq.size + 1
-            val newOnes = ctcAggregator.addWindowTokens(windowStartAbs, tokens)
+            val newOnes = ctcAggregator.addWindowTokens(windowStartAbs, filteredTokens)
 
             if (newOnes.isNotEmpty()) {
                 for (tk in newOnes) {
@@ -260,7 +270,7 @@ class RecognitionPipeline(
                         // Average logits over token span and argmax
                         val twoD = cat[0] // [T, num_cat]
                         
-                        // ✅ FIX: Convert absolute indices to window-relative indices
+                        // Convert absolute indices to window-relative indices
                         val startT = maxOf(0, tk.startT - windowStartAbs)
                         val endT = minOf(twoD.size - 1, tk.endT - windowStartAbs)
                         
@@ -302,7 +312,10 @@ class RecognitionPipeline(
                         categoryConfidence = categoryConfidence,
                         timestamp = System.currentTimeMillis()
                     )
-                    withContext(Dispatchers.Main) { onSignRecognized(recognizedSign) }
+                    withContext(Dispatchers.Main) { 
+                        onSignRecognized(recognizedSign) 
+                    }
+                    lastRecognitionTime = System.currentTimeMillis()
                     val catConfStr = "%.2f".format(categoryConfidence)
                     val glossConfStr = "%.2f".format(tk.confidence)
                     Log.i(TAG, "CTC token: ${tk.id} $glossLabel (cat: $categoryId $categoryLabel $catConfStr) conf=$glossConfStr frames=[${tk.startT}-${tk.endT}]")

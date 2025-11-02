@@ -5,7 +5,7 @@
   "num_ctc": 106,
   "num_cat": 10,
   "window_size_hint": 120,
-  "stride_hint": 40,
+  "stride_hint": 45,
   "decode_default": "greedy",
   "model_type": "sign_transformer_ctc",
   "labels_file": "label_mapping.json",
