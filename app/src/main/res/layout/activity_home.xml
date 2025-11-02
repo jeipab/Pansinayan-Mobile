@@ -24,7 +24,7 @@
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:layout_marginTop="8dp"
-        android:text="Filipino Sign Language Recognition"
+        android:text="Where Every Sign Gets Attention"
         android:textSize="14sp"
         android:textColor="#666666"
         android:gravity="center" />
@@ -63,7 +63,7 @@
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:layout_marginTop="48dp"
-        android:text="Version 1.0"
+        android:text="Filipino Sign Language Recognitition"
         android:textSize="12sp"
         android:textColor="#999999" />
 
