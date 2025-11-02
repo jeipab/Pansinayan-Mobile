@@ -533,8 +533,8 @@ class MainActivity : AppCompatActivity() {
      */
     private fun updateCurrentPredictionDisplay() {
         val predictionText = currentPrediction?.let { sign ->
-            "${sign.glossLabel} (${String.format("%.1f%%", sign.confidence * 100)})\n${sign.categoryLabel} (${String.format("%.1f%%", sign.categoryConfidence * 100)})"
-        } ?: "Gloss (Confidence)"
+            "${sign.glossLabel}\n${sign.categoryLabel}"
+        } ?: "Gloss\nCategory"
         transcriptTextView.text = predictionText
     }
 
@@ -689,7 +689,7 @@ class MainActivity : AppCompatActivity() {
      */
     private fun clearCurrentPrediction() {
         currentPrediction = null
-        transcriptTextView.text = "Gloss (Confidence)"
+        transcriptTextView.text = "Gloss\nCategory"
         Log.i(TAG, "Current prediction cleared")
     }
 
