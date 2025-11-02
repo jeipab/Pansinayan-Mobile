@@ -1,0 +1,23 @@
+version: '3.8'
+
+services:
+  pansinayan-server:
+    build: .
+    container_name: pansinayan-server
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./logs:/app/logs
+      - ./SignTransformerCtc_best.pt:/app/SignTransformerCtc_best.pt
+      - ./MediaPipeGRUCtc_best.pt:/app/MediaPipeGRUCtc_best.pt
+    environment:
+      - DEVICE=cuda
+      - LOG_LEVEL=info
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    restart: unless-stopped
