@@ -36,6 +36,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
 import java.util.*
+import java.util.LinkedList
 import com.fslr.pansinayan.network.NetworkClient
 import com.fslr.pansinayan.utils.ModeManager
 
@@ -61,6 +62,7 @@ class MainActivity : AppCompatActivity() {
         private const val CAMERA_PERMISSION_REQUEST = 101
         private const val AUDIO_PERMISSION_REQUEST = 102
         private const val SCREEN_RECORD_REQUEST = 103
+        private const val OCCLUSION_CHECK_WINDOW_MS = 2000L // 2 seconds
     }
 
     // UI Components (bind these in onCreate after setContentView)
@@ -153,6 +155,11 @@ class MainActivity : AppCompatActivity() {
 
     // Current prediction (single most recent recognition)
     private var currentPrediction: RecognizedSign? = null
+    
+    // Occlusion history with timestamps: (isOccluded, timestamp)
+    // Used to check if occlusion occurred within the last 2 seconds
+    private val occlusionHistory = LinkedList<Pair<Boolean, Long>>()
+    private val occlusionHistoryLock = Any()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -532,6 +539,18 @@ class MainActivity : AppCompatActivity() {
         overlayView.setKeypoints(keypoints, imageWidth, imageHeight)
         occlusionIndicator.setBackgroundColor(if (isOccluded) Color.RED else Color.GREEN)
         
+        // Store occlusion status with timestamp for temporal checking
+        val currentTime = System.currentTimeMillis()
+        synchronized(occlusionHistoryLock) {
+            occlusionHistory.addLast(Pair(isOccluded, currentTime))
+            
+            // Clean up old entries (older than 2 seconds + some buffer)
+            val cutoffTime = currentTime - OCCLUSION_CHECK_WINDOW_MS - 1000
+            while (occlusionHistory.isNotEmpty() && occlusionHistory.first().second < cutoffTime) {
+                occlusionHistory.removeFirst()
+            }
+        }
+        
         if (debugModeEnabled) {
             updateDebugInfo(keypoints)
         }
@@ -579,20 +598,43 @@ class MainActivity : AppCompatActivity() {
     private fun saveToDatabase(sign: RecognizedSign) {
         lifecycleScope.launch(Dispatchers.IO) {
             try {
+                // Check if occlusion occurred within the last 2 seconds
+                val wasOccluded = checkRecentOcclusion(sign.timestamp)
+                
                 val history = RecognitionHistory(
                     timestamp = sign.timestamp,
                     glossLabel = sign.glossLabel,
                     glossConfidence = sign.confidence,
                     categoryLabel = sign.categoryLabel,
                     categoryConfidence = sign.categoryConfidence,
-                    occlusionStatus = if (occlusionIndicator.solidColor == Color.RED) "Occluded" else "Not Occluded",
+                    occlusionStatus = if (wasOccluded) "Occluded" else "Not Occluded",
                     modelUsed = currentModel
                 )
                 database.historyDao().insert(history)
-                Log.d(TAG, "Saved to database: ${sign.glossLabel} (${String.format("%.1f%%", sign.confidence * 100)}) - ${sign.categoryLabel} (${String.format("%.1f%%", sign.categoryConfidence * 100)})")
+                Log.d(TAG, "Saved to database: ${sign.glossLabel} (${String.format("%.1f%%", sign.confidence * 100)}) - ${sign.categoryLabel} (${String.format("%.1f%%", sign.categoryConfidence * 100)}) - Occlusion: ${if (wasOccluded) "Occluded" else "Not Occluded"}")
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to save to database", e)
             }
+        }
+    }
+    
+    /**
+     * Check if occlusion was detected within the last 2 seconds before recognition.
+     * This is more lenient since the sign may be finished by the time recognition occurs.
+     */
+    private fun checkRecentOcclusion(recognitionTime: Long): Boolean {
+        synchronized(occlusionHistoryLock) {
+            val cutoffTime = recognitionTime - OCCLUSION_CHECK_WINDOW_MS
+            
+            // Check all occlusion events within the 2-second window
+            for ((isOccluded, timestamp) in occlusionHistory) {
+                if (timestamp >= cutoffTime && isOccluded) {
+                    // Found at least one occlusion event within the window
+                    return true
+                }
+            }
+            
+            return false
         }
     }
 

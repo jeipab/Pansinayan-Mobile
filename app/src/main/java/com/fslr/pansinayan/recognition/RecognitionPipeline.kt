@@ -61,7 +61,7 @@ class RecognitionPipeline(
 
     // Core components
     private var lastRecognitionTime = 0L
-    private val RECOGNITION_COOLDOWN_MS = 500L
+    private val RECOGNITION_COOLDOWN_MS = 3000L
     private lateinit var cameraManager: CameraManager
     private lateinit var mediaPipeProcessor: MediaPipeProcessor
     private lateinit var bufferManager: SequenceBufferManager
