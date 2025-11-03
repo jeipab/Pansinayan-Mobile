@@ -36,6 +36,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
 import java.util.*
+import com.fslr.pansinayan.network.NetworkClient
+import com.fslr.pansinayan.utils.ModeManager
 
 /**
  * Main activity for live sign language recognition.
@@ -78,7 +80,9 @@ class MainActivity : AppCompatActivity() {
     private lateinit var radioModelSelection: RadioGroup
     
     private var debugModeEnabled = false
+    private var configModeEnabled = false
     private var longPressStartTime = 0L
+    private var longPressStartTimeConfig = 0L
     private val longPressThreshold = 500L
 
     // Recognition pipeline
@@ -94,6 +98,8 @@ class MainActivity : AppCompatActivity() {
     private var isRecording = false
     private var recordingStartTime = 0L
     private var pendingRecordingData: Pair<Int, Intent?>? = null
+    private lateinit var switchMode: SwitchMaterial
+    private lateinit var btnServerSettings: FloatingActionButton
 
     // Broadcast receiver for recording status
     private val recordingStatusReceiver = object : BroadcastReceiver() {
@@ -178,6 +184,11 @@ class MainActivity : AppCompatActivity() {
         fabHistory = findViewById(R.id.fab_history)
         fabBack = findViewById(R.id.fab_back)
         radioModelSelection = findViewById(R.id.radio_model_selection)
+        switchMode = findViewById(R.id.switch_mode)
+        btnServerSettings = findViewById(R.id.fab_server_settings)
+        
+        // Hide server settings button by default
+        btnServerSettings.visibility = View.GONE
 
         // Initialize database
         database = AppDatabase.getDatabase(this)
@@ -293,6 +304,54 @@ class MainActivity : AppCompatActivity() {
             // Trigger the OnBackPressedDispatcher callback we registered
             onBackPressedDispatcher.onBackPressed()
         }
+
+        // Mode switch
+        switchMode.setOnCheckedChangeListener { _, isChecked ->
+            val newMode = if (isChecked) {
+                ModeManager.InferenceMode.ONLINE
+            } else {
+                ModeManager.InferenceMode.OFFLINE
+            }
+
+            if (::recognitionPipeline.isInitialized) {
+                recognitionPipeline.switchMode(newMode)
+            }
+        }
+        
+        // Long press handler for config mode on online mode switch
+        switchMode.setOnTouchListener { _, event ->
+            when (event.action) {
+                android.view.MotionEvent.ACTION_DOWN -> {
+                    longPressStartTimeConfig = System.currentTimeMillis()
+                    false
+                }
+                android.view.MotionEvent.ACTION_UP -> {
+                    val pressDuration = System.currentTimeMillis() - longPressStartTimeConfig
+                    if (pressDuration >= longPressThreshold) {
+                        toggleConfigMode()
+                        true
+                    } else {
+                        false
+                    }
+                }
+                android.view.MotionEvent.ACTION_CANCEL -> {
+                    longPressStartTimeConfig = 0L
+                    false
+                }
+                else -> false
+            }
+        }
+
+        // Initialize switch state
+        if (::recognitionPipeline.isInitialized) {
+            val currentMode = recognitionPipeline.getCurrentMode()
+            switchMode.isChecked = (currentMode == ModeManager.InferenceMode.ONLINE)
+        }
+
+        // Server settings button
+        btnServerSettings.setOnClickListener {
+            showServerSettingsDialog()
+        }
     }
 
     private fun toggleDebugMode() {
@@ -307,6 +366,15 @@ class MainActivity : AppCompatActivity() {
         val status = if (debugModeEnabled) "enabled" else "disabled"
         Toast.makeText(this, "Debug mode $status", Toast.LENGTH_SHORT).show()
         Log.i(TAG, "Debug mode $status")
+    }
+
+    private fun toggleConfigMode() {
+        configModeEnabled = !configModeEnabled
+        btnServerSettings.visibility = if (configModeEnabled) View.VISIBLE else View.GONE
+        
+        val status = if (configModeEnabled) "enabled" else "disabled"
+        Toast.makeText(this, "Config mode $status", Toast.LENGTH_SHORT).show()
+        Log.i(TAG, "Config mode $status")
     }
 
     private fun switchModel(ptPath: String, metadataPath: String) {
@@ -700,6 +768,74 @@ class MainActivity : AppCompatActivity() {
         if (::recognitionPipeline.isInitialized) {
             // Toggle between start and stop
             // Implementation depends on your UI design
+        }
+    }
+
+    private fun showServerSettingsDialog() {
+        val builder = androidx.appcompat.app.AlertDialog.Builder(this)
+        builder.setTitle("Server Settings")
+
+        val input = android.widget.EditText(this)
+        input.setText(NetworkClient.getServerUrl())
+        input.hint = "http://server-ip:8000"
+        input.inputType = android.text.InputType.TYPE_TEXT_VARIATION_URI
+
+        val container = android.widget.FrameLayout(this)
+        val params = android.widget.FrameLayout.LayoutParams(
+            android.widget.FrameLayout.LayoutParams.MATCH_PARENT,
+            android.widget.FrameLayout.LayoutParams.WRAP_CONTENT
+        )
+        params.leftMargin = 48
+        params.rightMargin = 48
+        input.layoutParams = params
+        container.addView(input)
+
+        builder.setView(container)
+
+        builder.setPositiveButton("Save") { dialog, _ ->
+            val newUrl = input.text.toString().trim()
+            if (newUrl.isNotEmpty()) {
+                NetworkClient.setServerUrl(newUrl)
+                Toast.makeText(this, "Server URL saved", Toast.LENGTH_SHORT).show()
+            }
+            dialog.dismiss()
+        }
+
+        builder.setNegativeButton("Cancel") { dialog, _ ->
+            dialog.cancel()
+        }
+
+        builder.setNeutralButton("Test") { _, _ ->
+            testServerConnection()
+        }
+
+        builder.show()
+    }
+
+    private fun testServerConnection() {
+        lifecycleScope.launch {
+            try {
+                Toast.makeText(this@MainActivity, "Testing connection...", Toast.LENGTH_SHORT).show()
+
+                val isConnected = withContext(Dispatchers.IO) {
+                    NetworkClient.testConnection()
+                }
+
+                val message = if (isConnected) {
+                    "✓ Server is reachable"
+                } else {
+                    "✗ Cannot reach server"
+                }
+
+                Toast.makeText(this@MainActivity, message, Toast.LENGTH_LONG).show()
+
+            } catch (e: Exception) {
+                Toast.makeText(
+                    this@MainActivity,
+                    "Connection test failed: ${e.message}",
+                    Toast.LENGTH_LONG
+                ).show()
+            }
         }
     }
 }

@@ -6,6 +6,7 @@ import androidx.camera.core.ImageProxy
 import androidx.lifecycle.LifecycleOwner
 import com.fslr.pansinayan.camera.CameraManager
 import com.fslr.pansinayan.inference.CTCDecoder
+import com.fslr.pansinayan.inference.CtcOutputs
 import com.fslr.pansinayan.inference.ModelRunner
 import com.fslr.pansinayan.inference.PyTorchModelRunner
 import com.fslr.pansinayan.inference.PreprocessingUtils
@@ -16,6 +17,10 @@ import kotlinx.coroutines.*
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
+import com.fslr.pansinayan.inference.RemoteModelRunner
+import com.fslr.pansinayan.network.NetworkClient
+import com.fslr.pansinayan.utils.ModeManager
+import kotlinx.coroutines.runBlocking
 
 /**
  * Orchestrates the complete recognition pipeline with health monitoring.
@@ -86,6 +91,10 @@ class RecognitionPipeline(
     private val lastFrameTime = AtomicLong(0)
     private val lastKeypointTime = AtomicLong(0)
     private var healthMonitorJob: Job? = null
+    private lateinit var modeManager: ModeManager
+    private var remoteRunner: RemoteModelRunner? = null
+    private val isOnlineMode: Boolean
+        get() = modeManager.isOnlineMode()
 
     /**
      * Initialize all components.
@@ -98,13 +107,33 @@ class RecognitionPipeline(
             cameraManager = CameraManager(context, lifecycleOwner, previewView, targetFps = 30)
             mediaPipeProcessor = MediaPipeProcessor(context, this)
 
-            // Strictly use PyTorch Lite; fail fast if asset is missing
-            context.assets.open("SignTransformerCtc_best.ptl").close()
-            ctcRunner = PyTorchModelRunner(
-                context = context,
-                assetModelPath = "SignTransformerCtc_best.ptl",
-                metadataPath = "SignTransformerCtc_best.model.json"
-            )
+            modeManager = ModeManager(context)
+            NetworkClient.initialize(context)
+
+            val mode = modeManager.getCurrentMode()
+            Log.i(TAG, "Current mode: $mode")
+
+            when (mode) {
+                ModeManager.InferenceMode.OFFLINE -> {
+                    // Load local PyTorch Lite model
+                    context.assets.open("SignTransformerCtc_best.ptl").close()
+                    ctcRunner = PyTorchModelRunner(
+                        context = context,
+                        assetModelPath = "SignTransformerCtc_best.ptl",
+                        metadataPath = "SignTransformerCtc_best.model.json"
+                    )
+                    Log.i(TAG, "Loaded local PyTorch Lite model")
+                }
+                ModeManager.InferenceMode.ONLINE -> {
+                    // Use remote model runner
+                    remoteRunner = RemoteModelRunner(
+                        context = context,
+                        metadataPath = "SignTransformerCtc_best.model.json"
+                    )
+                    ctcRunner = createRemoteRunnerWrapper(remoteRunner!!)
+                    Log.i(TAG, "Using remote server for inference")
+                }
+            }
 
             ctcWindowSize = ctcRunner.meta.window_size_hint
             ctcStride = ctcRunner.meta.stride_hint
@@ -124,6 +153,107 @@ class RecognitionPipeline(
             throw e
         }
     }
+
+    /**
+     * Create wrapper that bridges RemoteModelRunner to ModelRunner interface.
+     */
+    private fun createRemoteRunnerWrapper(remote: RemoteModelRunner): ModelRunner {
+        return object : ModelRunner {
+            override val meta = remote.meta
+
+            override fun run(sequence: Array<FloatArray>): CtcOutputs {
+                // Block and wait for remote result
+                return runBlocking {
+                    remote.runAsync(sequence)
+                }
+            }
+
+            override fun release() {
+                remote.release()
+            }
+        }
+    }
+
+    /**
+     * Switch between online and offline mode at runtime.
+     */
+    fun switchMode(newMode: ModeManager.InferenceMode) {
+        pipelineScope.launch(Dispatchers.IO) {
+            try {
+                Log.i(TAG, "Switching to $newMode mode...")
+                isPaused.set(true)
+
+                // Release current runner
+                try { ctcRunner.release() } catch (_: Throwable) {}
+                remoteRunner = null
+
+                // Load new runner
+                when (newMode) {
+                    ModeManager.InferenceMode.OFFLINE -> {
+                        ctcRunner = PyTorchModelRunner(
+                            context = context,
+                            assetModelPath = "SignTransformerCtc_best.ptl",
+                            metadataPath = "SignTransformerCtc_best.model.json"
+                        )
+                    }
+                    ModeManager.InferenceMode.ONLINE -> {
+                        // Test connection first
+                        val isConnected = NetworkClient.testConnection()
+                        if (!isConnected) {
+                            throw RuntimeException("Cannot connect to server")
+                        }
+
+                        remoteRunner = RemoteModelRunner(
+                            context = context,
+                            metadataPath = "SignTransformerCtc_best.model.json"
+                        )
+                        ctcRunner = createRemoteRunnerWrapper(remoteRunner!!)
+                    }
+                }
+
+                // Update mode manager
+                modeManager.setMode(newMode)
+
+                // Reset pipeline state
+                bufferManager.clear()
+                ctcAggregator.clear()
+                totalInferenceTimeMs = 0L
+                inferenceCount = 0L
+
+                lastFrameTime.set(System.currentTimeMillis())
+                lastKeypointTime.set(System.currentTimeMillis())
+                isPaused.set(false)
+
+                Log.i(TAG, "Mode switch completed: $newMode")
+
+                // Notify on main thread
+                withContext(Dispatchers.Main) {
+                    android.widget.Toast.makeText(
+                        context,
+                        "Switched to ${newMode.name} mode",
+                        android.widget.Toast.LENGTH_SHORT
+                    ).show()
+                }
+
+            } catch (t: Throwable) {
+                Log.e(TAG, "Mode switch failed", t)
+                isPaused.set(false)
+
+                withContext(Dispatchers.Main) {
+                    android.widget.Toast.makeText(
+                        context,
+                        "Failed to switch mode: ${t.message}",
+                        android.widget.Toast.LENGTH_LONG
+                    ).show()
+                }
+            }
+        }
+    }
+
+    /**
+     * Get current inference mode.
+     */
+    fun getCurrentMode(): ModeManager.InferenceMode = modeManager.getCurrentMode()
 
     /**
      * Start the recognition pipeline.

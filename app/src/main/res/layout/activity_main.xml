@@ -35,8 +35,8 @@
         android:layout_width="30dp"
         android:layout_height="30dp"
         android:layout_margin="16dp"
-        android:layout_marginTop="8dp"
-        android:layout_marginEnd="8dp"
+        android:layout_marginTop="16dp"
+        android:layout_marginEnd="16dp"
         android:background="@drawable/indicator_circle"
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintTop_toTopOf="parent" />
@@ -73,13 +73,27 @@
         android:layout_height="wrap_content"
         android:layout_marginStart="16dp"
         android:layout_marginBottom="4dp"
-        android:text="Show Skeleton"
+        android:text="Show Skeleton  "
         android:textColor="@android:color/white"
         android:textStyle="bold"
         app:thumbTint="@color/primary_blue"
         app:trackTint="@color/primary_blue_dark"
         app:layout_constraintBottom_toTopOf="@id/transcript_card"
         app:layout_constraintStart_toStartOf="parent" />
+
+    <!-- Mode Switch (Online/Offline) -->
+    <com.google.android.material.switchmaterial.SwitchMaterial
+        android:id="@+id/switch_mode"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_margin="16dp"
+        android:text="Online Mode    "
+        android:textColor="@android:color/white"
+        android:textStyle="bold"
+        app:layout_constraintBottom_toTopOf="@+id/toggle_skeleton"
+        app:layout_constraintStart_toStartOf="parent"
+        app:thumbTint="@color/primary_blue"
+        app:trackTint="@color/primary_blue_dark" />
 
     <!-- Model Selection Radio Group -->
     <RadioGroup
@@ -203,6 +217,18 @@
                 android:fontFamily="monospace" />
         </ScrollView>
     </androidx.cardview.widget.CardView>
+
+    <com.google.android.material.floatingactionbutton.FloatingActionButton
+        android:id="@+id/fab_server_settings"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_margin="16dp"
+        android:contentDescription="Server Settings"
+        android:src="@drawable/ic_settings"
+        app:backgroundTint="@color/primary_blue"
+        app:layout_constraintBottom_toTopOf="@+id/fab_back"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:tint="@android:color/white" />
 
     <!-- Stats Display (Bottom, for debugging) -->
     <androidx.cardview.widget.CardView
