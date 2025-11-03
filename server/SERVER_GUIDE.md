@@ -44,6 +44,22 @@ Server starts on `http://0.0.0.0:8000`
 
 ## Vast.AI Deployment
 
+### Step 0: Create/Update Server Package (If Needed)
+
+**When to do this:**
+
+- If `pansinayan_server.tar.gz` doesn't exist
+- If server code has been updated and needs to be repackaged
+
+**Create the package:**
+
+```bash
+cd server
+tar -czf ../pansinayan_server.tar.gz *
+```
+
+---
+
 ### Step 1: Rent Instance
 
 1. Go to [vast.ai/console/instances](https://vast.ai/console/instances)
@@ -71,7 +87,7 @@ mkdir -p pansinayan
 cd pansinayan
 
 # Download server package from Google Drive
-gdown "https://drive.google.com/uc?id=1U5t6HU25En1kj-CU2BchuPFWgD62sV8n" -O pansinayan_server.tar.gz
+gdown 1I44iAYKYFEC6qSMm5llQP-E8j2GpKyVY
 
 # Extract
 tar -xzf pansinayan_server.tar.gz

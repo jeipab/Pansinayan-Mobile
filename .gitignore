@@ -54,3 +54,6 @@ wheels/
 *.egg-info/
 .installed.cfg
 *.egg
+
+# Server files
+pansinayan_server.tar.gz
