@@ -61,7 +61,7 @@ class RecognitionPipeline(
 
     // Core components
     private var lastRecognitionTime = 0L
-    private val RECOGNITION_COOLDOWN_MS = 3000L
+    private val RECOGNITION_COOLDOWN_MS = 4000L
     private lateinit var cameraManager: CameraManager
     private lateinit var mediaPipeProcessor: MediaPipeProcessor
     private lateinit var bufferManager: SequenceBufferManager
@@ -343,7 +343,7 @@ class RecognitionPipeline(
         
         val pop = bufferManager.popWindowIfReady(ctcStride) ?: return
         val (windowSeq, missingRatio) = pop
-        if (missingRatio > 0.5f) {
+        if (missingRatio > 0.3f) {
             Log.d(TAG, "Skipping inference due to missing ratio: $missingRatio")
             return
         }

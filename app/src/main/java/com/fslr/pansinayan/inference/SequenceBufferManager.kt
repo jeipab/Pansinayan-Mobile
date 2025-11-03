@@ -23,7 +23,7 @@ class SequenceBufferManager(
 ) {
     companion object {
         private const val TAG = "SequenceBufferManager"
-        private const val MIN_SEQUENCE_LENGTH = 60
+        private const val MIN_SEQUENCE_LENGTH = 120
     }
 
     // Circular buffer to store keypoint sequences
