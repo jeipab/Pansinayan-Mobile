@@ -53,9 +53,38 @@ object NetworkClient {
         return prefs.getString(KEY_SERVER_URL, DEFAULT_SERVER_URL) ?: DEFAULT_SERVER_URL
     }
 
-    fun setServerUrl(url: String) {
-        prefs.edit().putString(KEY_SERVER_URL, url).apply()
-        Log.i(TAG, "Server URL updated to: $url")
+    fun setServerUrl(url: String, context: Context? = null) {
+        // Normalize URL: ensure it ends with / for Retrofit
+        val normalizedUrl = if (url.endsWith("/")) url else "$url/"
+        prefs.edit().putString(KEY_SERVER_URL, normalizedUrl).apply()
+        Log.i(TAG, "Server URL updated to: $normalizedUrl")
+        
+        // Reinitialize Retrofit instance with new URL if context is provided
+        context?.let {
+            if (::prefs.isInitialized) {
+                val serverUrl = getServerUrl()
+                Log.i(TAG, "Reinitializing NetworkClient with server: $serverUrl")
+
+                val loggingInterceptor = HttpLoggingInterceptor().apply {
+                    level = HttpLoggingInterceptor.Level.BASIC
+                }
+
+                val okHttpClient = OkHttpClient.Builder()
+                    .addInterceptor(loggingInterceptor)
+                    .connectTimeout(10, TimeUnit.SECONDS)
+                    .readTimeout(30, TimeUnit.SECONDS)
+                    .writeTimeout(30, TimeUnit.SECONDS)
+                    .build()
+
+                val retrofit = Retrofit.Builder()
+                    .baseUrl(serverUrl)
+                    .client(okHttpClient)
+                    .addConverterFactory(GsonConverterFactory.create())
+                    .build()
+
+                api = retrofit.create(PansinayanApi::class.java)
+            }
+        }
     }
 
     /**

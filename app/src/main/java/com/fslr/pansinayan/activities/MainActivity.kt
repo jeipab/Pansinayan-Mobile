@@ -795,7 +795,7 @@ class MainActivity : AppCompatActivity() {
         builder.setPositiveButton("Save") { dialog, _ ->
             val newUrl = input.text.toString().trim()
             if (newUrl.isNotEmpty()) {
-                NetworkClient.setServerUrl(newUrl)
+                NetworkClient.setServerUrl(newUrl, this@MainActivity)
                 Toast.makeText(this, "Server URL saved", Toast.LENGTH_SHORT).show()
             }
             dialog.dismiss()

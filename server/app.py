@@ -154,7 +154,11 @@ async def startup_event():
         )
         
         transformer_path = get_model_path("transformer")
-        transformer.load_state_dict(torch.load(transformer_path, map_location=device))
+        checkpoint = torch.load(transformer_path, map_location=device)
+        if isinstance(checkpoint, dict) and 'model' in checkpoint:
+            transformer.load_state_dict(checkpoint['model'])
+        else:
+            transformer.load_state_dict(checkpoint)
         transformer.to(device)
         transformer.eval()
         models["transformer"] = transformer
@@ -174,7 +178,11 @@ async def startup_event():
         )
         
         gru_path = get_model_path("gru")
-        gru.load_state_dict(torch.load(gru_path, map_location=device))
+        checkpoint = torch.load(gru_path, map_location=device)
+        if isinstance(checkpoint, dict) and 'model' in checkpoint:
+            gru.load_state_dict(checkpoint['model'])
+        else:
+            gru.load_state_dict(checkpoint)
         gru.to(device)
         gru.eval()
         models["gru"] = gru
