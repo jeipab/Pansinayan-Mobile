@@ -67,7 +67,8 @@ class MainActivity : AppCompatActivity() {
 
     // UI Components (bind these in onCreate after setContentView)
     private lateinit var previewView: PreviewView
-    private lateinit var transcriptTextView: TextView
+    private lateinit var transcriptGlossTextView: TextView
+    private lateinit var transcriptCategoryTextView: TextView
     private lateinit var statsTextView: TextView
     private lateinit var debugInfoTextView: TextView
     private lateinit var statsCard: View
@@ -178,7 +179,8 @@ class MainActivity : AppCompatActivity() {
         
         // Bind UI components
         previewView = findViewById(R.id.preview_view)
-        transcriptTextView = findViewById(R.id.transcript_text)
+        transcriptGlossTextView = findViewById(R.id.transcript_gloss)
+        transcriptCategoryTextView = findViewById(R.id.transcript_category)
         statsTextView = findViewById(R.id.stats_text)
         debugInfoTextView = findViewById(R.id.debug_info_text)
         statsCard = findViewById(R.id.stats_card)
@@ -642,10 +644,13 @@ class MainActivity : AppCompatActivity() {
      * Update display to show current prediction.
      */
     private fun updateCurrentPredictionDisplay() {
-        val predictionText = currentPrediction?.let { sign ->
-            "${sign.glossLabel}\n${sign.categoryLabel}"
-        } ?: "Gloss\nCategory"
-        transcriptTextView.text = predictionText
+        if (currentPrediction != null) {
+            transcriptGlossTextView.text = currentPrediction!!.glossLabel
+            transcriptCategoryTextView.text = currentPrediction!!.categoryLabel
+        } else {
+            transcriptGlossTextView.text = "Gloss"
+            transcriptCategoryTextView.text = "Category"
+        }
     }
 
 
@@ -799,7 +804,8 @@ class MainActivity : AppCompatActivity() {
      */
     private fun clearCurrentPrediction() {
         currentPrediction = null
-        transcriptTextView.text = "Gloss\nCategory"
+        transcriptGlossTextView.text = "Gloss"
+        transcriptCategoryTextView.text = "Category"
         Log.i(TAG, "Current prediction cleared")
     }
 
