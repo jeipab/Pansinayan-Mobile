@@ -4,12 +4,9 @@ uvicorn[standard]==0.24.0
 pydantic==2.5.0
 pydantic-settings==2.1.0
 
-# PyTorch
-torch
-torchvision
-
-# For CPU only (testing)
-# torch==2.1.0
+# PyTorch (pinned to match Docker base image)
+torch==2.1.0
+torchvision==0.16.0
 
 # Utilities
 numpy>=2.0.0,<2.3.0
@@ -18,3 +15,6 @@ python-dotenv==1.0.0
 
 # Monitoring & Logging
 psutil
+
+# Testing
+requests>=2.31.0
