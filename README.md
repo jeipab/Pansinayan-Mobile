@@ -20,14 +20,16 @@
 ## ⚙️ System Architecture
 
 ```
-Camera (30 FPS) → MediaPipe (89 keypoints) → Sliding Window (150 frames)
-→ CTC Model → Dual Decoder → UI (Gloss + Category)
+Camera (30 FPS) → MediaPipe (89 keypoints) → Activity Detection → Sign Boundary Detection
+→ Adaptive Buffer → Inference Trigger → CTC Model → Aggregator → UI (Gloss + Category)
 ```
 
 **How It Works:**
 
-- **Sliding Window:** 150-frame window (5 seconds) slides forward by 10 frames every ~0.33s
-- **Continuous Recognition:** Model processes overlapping windows to detect multiple signs
+- **Activity Detection:** Detects when user is actively signing vs idle
+- **Sign Boundary Detection:** Identifies start and end of individual signs
+- **Adaptive Inference:** Triggers inference only when complete signs are captured
+- **Sign-Aligned Windows:** Processing windows aligned with actual sign boundaries
 - **CTC Decoding:** Collapses frame-level predictions into sign sequences
 - **Output:** Both gloss ("GOOD MORNING") and category ("GREETINGS") per sign
 
@@ -42,10 +44,12 @@ Example: Sign "GOOD MORNING EGG" → Outputs: "GOOD MORNING" [GREETINGS], "EGG" 
 - **MediaPipeProcessor** - Extracts 89 keypoints (25 pose + 21×2 hands + 22 face)
 - **CameraManager** - CameraX 30 FPS capture with overlay visualization
 
-### **2. Sequence Management**
+### **2. Activity & Sequence Management**
 
-- **SequenceBufferManager** - Maintains sliding 150-frame buffer (5 seconds)
-- Slides forward by 10 frames every ~0.33s for continuous recognition
+- **ActivityDetector** - Detects user activity (signing vs idle) from keypoint motion
+- **SignBoundaryDetector** - Identifies sign start/end boundaries
+- **AdaptiveBufferManager** - Maintains rolling buffer (300 frames) with sign-aware window extraction
+- **InferenceTrigger** - Controls when inference is called based on sign completion
 
 ### **3. Model Inference**
 
@@ -54,8 +58,9 @@ Example: Sign "GOOD MORNING EGG" → Outputs: "GOOD MORNING" [GREETINGS], "EGG" 
 
 ### **4. Recognition Pipeline**
 
-- **RecognitionPipeline** - Orchestrates sliding window inference with health monitoring
-- Runs every 10 frames, processes overlapping windows, outputs gloss + category pairs
+- **RecognitionPipeline** - Orchestrates activity-driven inference with health monitoring
+- Triggers inference when sign boundaries are detected, ensures complete sign capture
+- Outputs gloss + category pairs aligned with actual sign boundaries
 
 ### **5. UI & Persistence**
 
@@ -71,7 +76,7 @@ Example: Sign "GOOD MORNING EGG" → Outputs: "GOOD MORNING" [GREETINGS], "EGG" 
 
 - **Shape:** `[1, 150, 178]` (150 frames × 89 keypoints × 2 coordinates)
 - **Type:** Float32
-- **Content:** MediaPipe keypoints over 5-second sliding window
+- **Content:** MediaPipe keypoints extracted from sign-aligned windows (typically 150 frames)
 
 ### Output
 
@@ -173,9 +178,9 @@ Your `assets/` folder should contain 5 files total.
 │   │   │   │   ├── adapter/           # RecyclerView adapter for history
 │   │   │   │   ├── camera/            # CameraManager (CameraX setup)
 │   │   │   │   ├── database/          # Room database (AppDatabase, HistoryDao)
-│   │   │   │   ├── inference/         # TFLiteModelRunner, CTCDecoder, SequenceBufferManager
+│   │   │   │   ├── inference/         # TFLiteModelRunner, CTCDecoder, PreprocessingUtils
 │   │   │   │   ├── mediapipe/         # MediaPipeProcessor (keypoint extraction)
-│   │   │   │   ├── recognition/       # RecognitionPipeline
+│   │   │   │   ├── recognition/       # RecognitionPipeline, ActivityDetector, SignBoundaryDetector, AdaptiveBufferManager
 │   │   │   │   ├── services/          # ScreenRecordService (video recording)
 │   │   │   │   ├── utils/             # LabelMapper, ModelSelector
 │   │   │   │   ├── views/             # OverlayView (skeleton visualization)

@@ -10,7 +10,6 @@ import com.fslr.pansinayan.inference.CtcOutputs
 import com.fslr.pansinayan.inference.ModelRunner
 import com.fslr.pansinayan.inference.PyTorchModelRunner
 import com.fslr.pansinayan.inference.PreprocessingUtils
-import com.fslr.pansinayan.inference.SequenceBufferManager
 import com.fslr.pansinayan.mediapipe.MediaPipeProcessor
 import com.fslr.pansinayan.utils.LabelMapper
 import kotlinx.coroutines.*
@@ -23,16 +22,17 @@ import com.fslr.pansinayan.utils.ModeManager
 import kotlinx.coroutines.runBlocking
 
 /**
- * Orchestrates the complete recognition pipeline with health monitoring.
+ * Orchestrates the complete recognition pipeline with activity-driven inference.
  * 
  * Pipeline flow:
- * Camera → MediaPipe → Buffer → PyTorch → Temporal Logic → UI Callback
+ * Camera → MediaPipe → Activity Detection → Sign Boundary Detection → Adaptive Buffer
+ * → Inference Trigger → CTC Model → Aggregator → UI Callback
  * 
  * Responsibilities:
  * - Coordinate all components
  * - Manage threading and async operations
  * - Handle lifecycle (start/stop/pause)
- * - Implement inference scheduling
+ * - Activity-driven inference scheduling
  * - Monitor pipeline health and recover from freezes
  * - Handle recording state changes
  * 
@@ -59,16 +59,15 @@ class RecognitionPipeline(
     }
 
     // Core components
-    private var lastRecognitionTime = 0L
-    private val RECOGNITION_COOLDOWN_MS = 3000L
     private lateinit var cameraManager: CameraManager
     private lateinit var mediaPipeProcessor: MediaPipeProcessor
-    private lateinit var bufferManager: SequenceBufferManager
+    private lateinit var bufferManager: AdaptiveBufferManager
+    private lateinit var activityDetector: ActivityDetector
+    private lateinit var boundaryDetector: SignBoundaryDetector
+    private lateinit var inferenceTrigger: InferenceTrigger
     private lateinit var ctcRunner: ModelRunner
-    private lateinit var temporalRecognizer: TemporalRecognizer
     private lateinit var ctcAggregator: CtcAggregator
-    private var ctcWindowSize: Int = 120
-    private var ctcStride: Int = 60
+    private var ctcWindowSize: Int = 150
     private lateinit var labelMapper: LabelMapper
     private var totalInferenceTimeMs: Long = 0L
     private var inferenceCount: Long = 0L
@@ -135,15 +134,28 @@ class RecognitionPipeline(
             }
 
             ctcWindowSize = ctcRunner.meta.window_size_hint
-            ctcStride = ctcRunner.meta.stride_hint
-            bufferManager = SequenceBufferManager(windowSize = ctcWindowSize, maxGap = 5)
-            ctcAggregator = CtcAggregator(iouThreshold = 0.5f, stabilityThreshold = 1)
             
-            temporalRecognizer = TemporalRecognizer(
-                stabilityThreshold = 5,
-                confidenceThreshold = 0.6f,
-                cooldownMs = 1000
+            // Initialize activity-driven components
+            activityDetector = ActivityDetector(
+                motionThreshold = 0.01f,
+                activeFramesRequired = 5,
+                idleFramesRequired = 15
             )
+            boundaryDetector = SignBoundaryDetector(
+                minSignDurationMs = 500L,
+                maxSignDurationMs = 5000L,
+                holdPeriodMs = 300L
+            )
+            inferenceTrigger = InferenceTrigger(
+                cooldownMs = 500L,
+                maxActiveDurationMs = 5000L
+            )
+            bufferManager = AdaptiveBufferManager(
+                maxBufferSize = 300,
+                windowSize = ctcWindowSize,
+                maxGap = 5
+            )
+            ctcAggregator = CtcAggregator(iouThreshold = 0.5f, stabilityThreshold = 1)
             labelMapper = LabelMapper(context)
 
             Log.i(TAG, "All components initialized successfully")
@@ -215,6 +227,9 @@ class RecognitionPipeline(
 
                 // Reset pipeline state
                 bufferManager.clear()
+                activityDetector.reset()
+                boundaryDetector.resetToIdle()
+                inferenceTrigger.reset()
                 ctcAggregator.clear()
                 totalInferenceTimeMs = 0L
                 inferenceCount = 0L
@@ -318,9 +333,32 @@ class RecognitionPipeline(
                     }
                 }
                 
+                // Add to buffer
                 bufferManager.addFrame(keypoints)
-
-                runCtcIfReady(currentFrame)
+                
+                // Process activity detection
+                val activityState = activityDetector.processFrame(keypoints)
+                val currentMotion = activityDetector.getCurrentMotion()
+                
+                // Process sign boundary detection
+                val boundaryEvent = boundaryDetector.processActivity(activityState, currentMotion, currentFrame)
+                
+                // Check for inference trigger
+                boundaryEvent?.let { event ->
+                    val triggerReason = inferenceTrigger.shouldTrigger(event, currentFrame)
+                    triggerReason?.let { reason ->
+                        triggerInference(reason, currentFrame)
+                    }
+                }
+                
+                // Check for long active period (fallback)
+                if (activityDetector.isActive()) {
+                    val longActiveTrigger = inferenceTrigger.checkLongActivePeriod(true, currentFrame)
+                    longActiveTrigger?.let { reason ->
+                        triggerInference(reason, currentFrame)
+                    }
+                }
+                
             } catch (e: Exception) {
                 Log.e(TAG, "Frame processing failed", e)
             }
@@ -332,22 +370,32 @@ class RecognitionPipeline(
     }
 
     /**
-     * Run inference if buffer has enough data.
+     * Trigger inference based on sign boundary detection.
      */
-    private suspend fun runCtcIfReady(currentFrame: Int) {
-        val currentTime = System.currentTimeMillis()
-        if (currentTime - lastRecognitionTime < RECOGNITION_COOLDOWN_MS) {
-            return
-        }
-        
-        val pop = bufferManager.popWindowIfReady(ctcStride) ?: return
-        val (windowSeq, missingRatio) = pop
-        if (missingRatio > 0.3f) {
-            Log.d(TAG, "Skipping inference due to missing ratio: $missingRatio")
-            return
-        }
-
+    private suspend fun triggerInference(reason: TriggerReason, currentFrame: Int) {
         try {
+            val windowSeq = when (reason) {
+                is TriggerReason.SignComplete -> {
+                    // Get sign boundaries from boundary detector
+                    val signStartFrame = boundaryDetector.getSignStartFrame() ?: return
+                    val signEndFrame = boundaryDetector.getSignEndFrame() ?: return
+                    bufferManager.extractSignWindow(signStartFrame, signEndFrame)
+                }
+                is TriggerReason.LongActivePeriod -> {
+                    bufferManager.extractSignWindow(reason.signStartFrame, reason.signEndFrame)
+                }
+            } ?: return
+
+            // Check for mostly zero frames (indicates missing data)
+            val zeroFrameCount = windowSeq.count { frame -> 
+                frame.all { v -> kotlin.math.abs(v) < 0.001f }
+            }
+            val missingRatio = if (windowSeq.isNotEmpty()) zeroFrameCount.toFloat() / windowSeq.size else 1f
+            if (missingRatio > 0.3f) {
+                Log.d(TAG, "Skipping inference due to missing ratio: $missingRatio")
+                return
+            }
+
             val startTime = System.currentTimeMillis()
             val clampedSeq = PreprocessingUtils.clamp01(windowSeq)
             val outputs = ctcRunner.run(clampedSeq)
@@ -357,7 +405,6 @@ class RecognitionPipeline(
             val logProbs = outputs.logProbs[0] // [T, num_ctc]
 
             if (debugLogging) {
-                // Compute per-frame argmax IDs (including blank) to verify output dynamics
                 val T = logProbs.size
                 if (T > 0) {
                     val arg = IntArray(T) { t ->
@@ -368,7 +415,6 @@ class RecognitionPipeline(
                         }
                         a
                     }
-                    // Mode id over the window
                     val counts = HashMap<Int, Int>()
                     for (v in arg) counts[v] = (counts[v] ?: 0) + 1
                     var modeId = arg[0]
@@ -382,11 +428,10 @@ class RecognitionPipeline(
             }
 
             val tokens = CTCDecoder.greedy(logProbs, ctcRunner.meta.blank_id)
-
             val CONFIDENCE_THRESHOLD = 0.65f
             val filteredTokens = tokens.filter { it.confidence >= CONFIDENCE_THRESHOLD }
 
-            // Estimate absolute window start frame index
+            // Estimate window start frame
             val windowStartAbs = currentFrame - windowSeq.size + 1
             val newOnes = ctcAggregator.addWindowTokens(windowStartAbs, filteredTokens)
 
@@ -396,10 +441,7 @@ class RecognitionPipeline(
                     var categoryId = 0
                     var categoryConfidence = 0f
                     outputs.catLogits?.let { cat ->
-                        // Average logits over token span and argmax
                         val twoD = cat[0] // [T, num_cat]
-                        
-                        // Convert absolute indices to window-relative indices
                         val startT = maxOf(0, tk.startT - windowStartAbs)
                         val endT = minOf(twoD.size - 1, tk.endT - windowStartAbs)
                         
@@ -419,7 +461,6 @@ class RecognitionPipeline(
                                 for (c in 1 until avg.size) if (avg[c] > best) { best = avg[c]; arg = c }
                                 categoryId = arg
                                 
-                                // Calculate category confidence using softmax
                                 val maxLogit = avg.maxOrNull() ?: 0f
                                 var expSum = 0f
                                 for (c in avg.indices) {
@@ -427,8 +468,6 @@ class RecognitionPipeline(
                                 }
                                 categoryConfidence = kotlin.math.exp(avg[categoryId] - maxLogit) / expSum
                             }
-                        } else {
-                            Log.w(TAG, "Token span [${tk.startT}-${tk.endT}] outside window [${windowStartAbs}-${windowStartAbs + twoD.size - 1}]")
                         }
                     }
                     val categoryLabel = labelMapper.getCategoryLabel(categoryId)
@@ -444,18 +483,18 @@ class RecognitionPipeline(
                     withContext(Dispatchers.Main) { 
                         onSignRecognized(recognizedSign) 
                     }
-                    lastRecognitionTime = System.currentTimeMillis()
                     val catConfStr = "%.2f".format(categoryConfidence)
                     val glossConfStr = "%.2f".format(tk.confidence)
                     Log.i(TAG, "CTC token: ${tk.id} $glossLabel (cat: $categoryId $categoryLabel $catConfStr) conf=$glossConfStr frames=[${tk.startT}-${tk.endT}]")
                 }
             }
+            
+            // Reset boundary detector after processing
+            boundaryDetector.reset()
         } catch (e: Exception) {
             Log.e(TAG, "CTC inference failed", e)
         }
     }
-
-    // Removed legacy single-label classification postprocessing
 
     /**
      * Start health monitoring to detect frozen pipeline.
@@ -600,11 +639,11 @@ class RecognitionPipeline(
         // DON'T cancel pipelineScope here - it breaks restart!
         // Scope will be cancelled in release() when truly done
         
-        // Clear buffer
+        // Clear buffer and reset detectors
         bufferManager.clear()
-
-        // Reset temporal state
-        temporalRecognizer.reset()
+        activityDetector.reset()
+        boundaryDetector.resetToIdle()
+        inferenceTrigger.reset()
 
         Log.i(TAG, "Pipeline stopped")
     }
@@ -633,10 +672,13 @@ class RecognitionPipeline(
         val (cameraProcessed, cameraTotal) = cameraManager.getStats()
         val (mediapipeSuccess, mediapipeFailure) = mediaPipeProcessor.getStats()
         val avgInferenceTime = if (inferenceCount > 0) totalInferenceTimeMs / inferenceCount else 0L
-        val temporalStats = temporalRecognizer.getStats()
         
         val timeSinceLastFrame = System.currentTimeMillis() - lastFrameTime.get()
         val timeSinceLastKeypoint = System.currentTimeMillis() - lastKeypointTime.get()
+        
+        val activityState = activityDetector.getState().name
+        val boundaryState = boundaryDetector.getState().name
+        val activityInfo = "Activity: $activityState, Boundary: $boundaryState"
         
         return PipelineStats(
             framesProcessed = cameraProcessed,
@@ -644,7 +686,7 @@ class RecognitionPipeline(
             keypointSuccess = mediapipeSuccess,
             keypointFailure = mediapipeFailure,
             avgInferenceTimeMs = avgInferenceTime,
-            temporalStats = temporalStats,
+            temporalStats = activityInfo,
             bufferSize = bufferManager.getBufferSize(),
             timeSinceLastFrame = timeSinceLastFrame,
             timeSinceLastKeypoint = timeSinceLastKeypoint,
@@ -695,13 +737,19 @@ class RecognitionPipeline(
                     metadataPath = metadataPath
                 )
 
-                // Update window/stride from new metadata
+                // Update window size from new metadata
                 ctcWindowSize = ctcRunner.meta.window_size_hint
-                ctcStride = ctcRunner.meta.stride_hint
 
                 // Rebuild buffer and aggregator
                 bufferManager.clear()
-                bufferManager = SequenceBufferManager(windowSize = ctcWindowSize, maxGap = 5)
+                bufferManager = AdaptiveBufferManager(
+                    maxBufferSize = 300,
+                    windowSize = ctcWindowSize,
+                    maxGap = 5
+                )
+                activityDetector.reset()
+                boundaryDetector.resetToIdle()
+                inferenceTrigger.reset()
                 ctcAggregator.clear()
 
                 // Reset perf stats
