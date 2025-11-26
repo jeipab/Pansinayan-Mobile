@@ -336,9 +336,14 @@ class RecognitionPipeline(
                 // Add to buffer
                 bufferManager.addFrame(keypoints)
                 
-                // Process activity detection
-                val activityState = activityDetector.processFrame(keypoints)
-                val currentMotion = activityDetector.getCurrentMotion()
+                // Process activity detection (returns state and motion together to avoid race conditions)
+                // Log keypoint validity for debugging
+                if (currentFrame % 60 == 0 && keypoints != null) {
+                    val nonZeroCount = keypoints.count { it != 0f }
+                    Log.d(TAG, "Frame $currentFrame: keypoints valid=$nonZeroCount/178")
+                }
+                
+                val (activityState, currentMotion) = activityDetector.processFrame(keypoints)
                 
                 // Process sign boundary detection
                 val boundaryEvent = boundaryDetector.processActivity(activityState, currentMotion, currentFrame)
@@ -678,7 +683,8 @@ class RecognitionPipeline(
         
         val activityState = activityDetector.getState().name
         val boundaryState = boundaryDetector.getState().name
-        val activityInfo = "Activity: $activityState, Boundary: $boundaryState"
+        val currentMotion = activityDetector.getCurrentMotion()
+        val activityInfo = "$activityState / $boundaryState (motion: ${"%.4f".format(currentMotion)})"
         
         return PipelineStats(
             framesProcessed = cameraProcessed,
@@ -862,22 +868,20 @@ data class PipelineStats(
     val isRecording: Boolean
 ) {
     override fun toString(): String {
-        // Format stats in 2 columns for compact display
-        val col1Line1 = "Frames: $framesProcessed/$framesTotal"
-        val col2Line1 = "Inference: ${avgInferenceTimeMs}ms"
-        val col1Line2 = "Keypoints: $keypointSuccess/$keypointFailure"
-        val col2Line2 = "Buffer: $bufferSize"
-        val col1Line3 = "Temporal: $temporalStats"
-        val col2Line3 = "Recording: ${if (isRecording) "Yes" else "No"}"
-        val col1Line4 = "Last frame: ${timeSinceLastFrame}ms"
-        val col2Line4 = "Last KP: ${timeSinceLastKeypoint}ms"
-        
-        return """
-            ${col1Line1.padEnd(28)} ${col2Line1}
-            ${col1Line2.padEnd(28)} ${col2Line2}
-            ${col1Line3.padEnd(28)} ${col2Line3}
-            ${col1Line4.padEnd(28)} ${col2Line4}
-        """.trimIndent()
+        // Clean, organized stats display
+        return buildString {
+            appendLine("📊 Pipeline Stats")
+            appendLine("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+            appendLine("📹 Frames: $framesProcessed / $framesTotal")
+            appendLine("🎯 Keypoints: $keypointSuccess ✓ / $keypointFailure ✗")
+            appendLine("💾 Buffer: $bufferSize frames")
+            appendLine("⚡ Inference: ${if (avgInferenceTimeMs > 0) "${avgInferenceTimeMs}ms" else "N/A"}")
+            appendLine("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+            appendLine("🔄 State: $temporalStats")
+            appendLine("⏱️  Last Frame: ${timeSinceLastFrame}ms ago")
+            appendLine("⏱️  Last Keypoint: ${timeSinceLastKeypoint}ms ago")
+            appendLine("📹 Recording: ${if (isRecording) "● ON" else "○ OFF"}")
+        }
     }
 }
 

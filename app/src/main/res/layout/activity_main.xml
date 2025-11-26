@@ -41,18 +41,18 @@
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintTop_toTopOf="parent" />
 
-    <!-- Debug Info Card (Bottom Left, above skeleton toggle) -->
+    <!-- Debug Info Card (Top Left, below model selection) -->
     <androidx.cardview.widget.CardView
         android:id="@+id/debug_info_card"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:layout_marginStart="16dp"
-        android:layout_marginBottom="8dp"
+        android:layout_marginTop="8dp"
         android:visibility="gone"
         app:cardCornerRadius="8dp"
         app:cardElevation="0dp"
         app:cardBackgroundColor="#CC000000"
-        app:layout_constraintBottom_toTopOf="@id/toggle_skeleton"
+        app:layout_constraintTop_toBottomOf="@id/radio_model_selection"
         app:layout_constraintStart_toStartOf="parent">
 
         <TextView
@@ -86,7 +86,8 @@
         android:id="@+id/switch_mode"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:layout_margin="16dp"
+        android:layout_marginStart="16dp"
+        android:layout_marginBottom="4dp"
         android:text="Online Mode    "
         android:textColor="@android:color/white"
         android:textStyle="bold"
