@@ -136,11 +136,8 @@ class RecognitionPipeline(
             ctcWindowSize = ctcRunner.meta.window_size_hint
             
             // Initialize activity-driven components
-            activityDetector = ActivityDetector(
-                motionThreshold = 0.01f,
-                activeFramesRequired = 5,
-                idleFramesRequired = 15
-            )
+            // Uses improved defaults: separate arm/hand thresholds, percentile filtering, jitter filtering
+            activityDetector = ActivityDetector()
             boundaryDetector = SignBoundaryDetector(
                 minSignDurationMs = 500L,
                 maxSignDurationMs = 5000L,

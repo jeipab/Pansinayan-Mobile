@@ -57,3 +57,6 @@ wheels/
 
 # Server files
 pansinayan_server.tar.gz
+
+# Documentation files
+docs/

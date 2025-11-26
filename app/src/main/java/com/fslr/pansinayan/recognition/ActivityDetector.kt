@@ -10,10 +10,13 @@ import kotlin.math.sqrt
  * This enables inference to be triggered only when user is actively signing.
  */
 class ActivityDetector(
-    private val motionThreshold: Float = 0.001f,  // Lowered threshold for better sensitivity
-    private val activeFramesRequired: Int = 3,    // Reduced frames required for faster response
-    private val idleFramesRequired: Int = 10,     // Reduced frames for faster idle detection
-    private val motionWindowSize: Int = 10
+    private val armMotionThreshold: Float = 0.003f,    // Higher threshold for arm movement (sign start)
+    private val handMotionThreshold: Float = 0.002f,   // Medium threshold for hand movement (active signing)
+    private val jitterFilterThreshold: Float = 0.0005f, // Lower threshold to filter out noise
+    private val activeFramesRequired: Int = 8,          // Increased - require sustained motion
+    private val idleFramesRequired: Int = 20,           // Increased - require sustained rest
+    private val motionWindowSize: Int = 15,             // Larger window for better smoothing
+    private val motionPercentile: Float = 0.75f         // Use 75th percentile instead of average
 ) {
     companion object {
         private const val TAG = "ActivityDetector"
@@ -26,8 +29,9 @@ class ActivityDetector(
     }
 
     private var previousKeypoints: FloatArray? = null
-    // Use array-based circular buffer instead of ArrayDeque to avoid iterator issues
-    private val motionHistory = FloatArray(motionWindowSize)
+    // Separate motion tracking for arms and hands
+    private val armMotionHistory = FloatArray(motionWindowSize)
+    private val handMotionHistory = FloatArray(motionWindowSize)
     private var motionHistorySize = 0
     private var motionHistoryIndex = 0
     private val motionHistoryLock = Any()
@@ -35,6 +39,12 @@ class ActivityDetector(
     private var consecutiveIdleFrames = 0
     @Volatile
     private var currentState = ActivityState.IDLE
+    
+    // Pose keypoint indices for arms (shoulders and elbows)
+    // MediaPipe pose: 11=left shoulder, 12=right shoulder, 13=left elbow, 14=right elbow
+    // In our array: pose is 0-49 (25 points × 2), so:
+    // Left shoulder: ~22-23, Right shoulder: ~24-25, Left elbow: ~26-27, Right elbow: ~28-29
+    private val armKeypointIndices = listOf(22, 23, 24, 25, 26, 27, 28, 29) // Shoulders and elbows
 
     /**
      * Process new keypoints and update activity state.
@@ -45,74 +55,88 @@ class ActivityDetector(
     fun processFrame(keypoints: FloatArray?): Pair<ActivityState, Float> {
         if (keypoints == null) {
             // Missing keypoints - treat as idle
-            updateMotionScore(0f)
+            updateMotionScores(0f, 0f)
             val motion = getAverageMotion()
             return Pair(currentState, motion)
         }
 
-        val motionScore = computeMotionScore(keypoints)
-        updateMotionScore(motionScore)
+        val (armMotion, handMotion) = computeMotionScores(keypoints)
+        updateMotionScores(armMotion, handMotion)
         
         val state = updateState()
-        val motion = getAverageMotion()
-        return Pair(state, motion)
+        val avgMotion = getAverageMotion()
+        return Pair(state, avgMotion)
     }
 
     /**
-     * Compute motion score by comparing current and previous keypoints.
-     * Focuses on hand and upper body pose keypoints.
+     * Compute separate motion scores for arms and hands.
+     * Returns Pair(armMotion, handMotion) for pattern-based detection.
      */
-    private fun computeMotionScore(current: FloatArray): Float {
+    private fun computeMotionScores(current: FloatArray): Pair<Float, Float> {
         val previous = previousKeypoints
         if (previous == null) {
             // First frame - initialize and return 0 (no motion yet)
             previousKeypoints = current.clone()
-            return 0f
+            return Pair(0f, 0f)
         }
         
-        var totalMotion = 0f
-        var validKeypoints = 0
-        
-        // Hand keypoints: indices 50-133 (42 left + 42 right = 84 values)
-        for (i in 50 until 134) {
-            // Only count non-zero keypoints (valid detections)
-            if (current[i] != 0f || previous[i] != 0f) {
-                val delta = current[i] - previous[i]
-                totalMotion += delta * delta
-                validKeypoints++
+        // Compute arm motion (shoulders and elbows)
+        var armMotion = 0f
+        var armValidPoints = 0
+        for (i in armKeypointIndices) {
+            if (i < current.size && i < previous.size) {
+                if (current[i] != 0f || previous[i] != 0f) {
+                    val delta = current[i] - previous[i]
+                    armMotion += delta * delta
+                    armValidPoints++
+                }
             }
         }
         
-        // Upper body pose keypoints: indices 0-49 (25 points × 2 = 50 values)
-        for (i in 0 until 50) {
-            // Only count non-zero keypoints (valid detections)
-            if (current[i] != 0f || previous[i] != 0f) {
-                val delta = current[i] - previous[i]
-                totalMotion += delta * delta
-                validKeypoints++
+        // Compute hand motion (all hand keypoints)
+        var handMotion = 0f
+        var handValidPoints = 0
+        // Hand keypoints: indices 50-133 (42 left + 42 right = 84 values)
+        for (i in 50 until 134) {
+            if (i < current.size && i < previous.size) {
+                if (current[i] != 0f || previous[i] != 0f) {
+                    val delta = current[i] - previous[i]
+                    handMotion += delta * delta
+                    handValidPoints++
+                }
             }
         }
         
         previousKeypoints = current.clone()
         
-        // Normalize by number of valid keypoints to get average motion per keypoint
-        // Then scale up since we're using squared differences
-        if (validKeypoints > 0) {
-            val avgMotion = totalMotion / validKeypoints
-            // Use sqrt to get magnitude, then scale for better sensitivity
-            return sqrt(avgMotion) * 10f  // Scale factor to make motion more detectable
-        }
+        // Normalize and scale
+        val armScore = if (armValidPoints > 0) {
+            sqrt(armMotion / armValidPoints) * 10f
+        } else 0f
         
-        return 0f
+        val handScore = if (handValidPoints > 0) {
+            sqrt(handMotion / handValidPoints) * 10f
+        } else 0f
+        
+        return Pair(armScore, handScore)
     }
 
     /**
-     * Update motion history using circular buffer.
+     * Update motion history for both arms and hands using circular buffer.
      */
-    private fun updateMotionScore(score: Float) {
+    private fun updateMotionScores(armScore: Float, handScore: Float) {
         synchronized(motionHistoryLock) {
-            // Add to circular buffer
-            motionHistory[motionHistoryIndex] = score
+            // Filter out jitter (very small movements)
+            val filteredArm = if (armScore < jitterFilterThreshold) 0f else armScore
+            val filteredHand = if (handScore < jitterFilterThreshold) 0f else handScore
+            
+            // Store combined motion (weighted: arms indicate sign start, hands indicate active signing)
+            val combinedMotion = filteredArm * 0.4f + filteredHand * 0.6f
+            
+            // Use arm motion for arm history, combined for overall
+            armMotionHistory[motionHistoryIndex] = filteredArm
+            handMotionHistory[motionHistoryIndex] = filteredHand
+            
             motionHistoryIndex = (motionHistoryIndex + 1) % motionWindowSize
             if (motionHistorySize < motionWindowSize) {
                 motionHistorySize++
@@ -121,62 +145,120 @@ class ActivityDetector(
     }
 
     /**
-     * Get average motion over recent frames.
+     * Get percentile-based motion (75th percentile) to filter outliers and jitter.
      */
-    private fun getAverageMotion(): Float {
+    private fun getPercentileMotion(percentile: Float): Float {
         synchronized(motionHistoryLock) {
             if (motionHistorySize == 0) return 0f
-            // Calculate average from circular buffer
-            var sum = 0f
-            if (motionHistorySize < motionWindowSize) {
-                // Buffer not full yet - read from start (all values are valid and in order)
-                for (i in 0 until motionHistorySize) {
-                    sum += motionHistory[i]
+            
+            // Collect motion values
+            val values = mutableListOf<Float>()
+            val count = if (motionHistorySize < motionWindowSize) motionHistorySize else motionWindowSize
+            
+            for (i in 0 until count) {
+                val idx = if (motionHistorySize < motionWindowSize) {
+                    i
+                } else {
+                    (motionHistoryIndex + i) % motionWindowSize
                 }
-                return sum / motionHistorySize
-            } else {
-                // Buffer is full - read most recent motionWindowSize values
-                // motionHistoryIndex points to where we'll write next (oldest value)
-                // Read from motionHistoryIndex wrapping around
-                for (i in 0 until motionWindowSize) {
-                    val idx = (motionHistoryIndex + i) % motionWindowSize
-                    sum += motionHistory[idx]
-                }
-                return sum / motionWindowSize
+                // Use combined motion (weighted arms + hands)
+                val combined = armMotionHistory[idx] * 0.4f + handMotionHistory[idx] * 0.6f
+                values.add(combined)
             }
+            
+            if (values.isEmpty()) return 0f
+            
+            // Sort and get percentile
+            values.sort()
+            val percentileIndex = ((values.size - 1) * percentile).toInt()
+            return values[percentileIndex]
+        }
+    }
+    
+    /**
+     * Get average motion for display/debugging.
+     */
+    private fun getAverageMotion(): Float {
+        return getPercentileMotion(0.5f) // Use median for display
+    }
+    
+    /**
+     * Get arm and hand motion separately for pattern detection.
+     */
+    private fun getArmAndHandMotion(): Pair<Float, Float> {
+        synchronized(motionHistoryLock) {
+            if (motionHistorySize == 0) return Pair(0f, 0f)
+            
+            val count = if (motionHistorySize < motionWindowSize) motionHistorySize else motionWindowSize
+            val armValues = mutableListOf<Float>()
+            val handValues = mutableListOf<Float>()
+            
+            for (i in 0 until count) {
+                val idx = if (motionHistorySize < motionWindowSize) {
+                    i
+                } else {
+                    (motionHistoryIndex + i) % motionWindowSize
+                }
+                armValues.add(armMotionHistory[idx])
+                handValues.add(handMotionHistory[idx])
+            }
+            
+            armValues.sort()
+            handValues.sort()
+            
+            val armPercentile = if (armValues.isNotEmpty()) {
+                val idx = ((armValues.size - 1) * motionPercentile).toInt()
+                armValues[idx]
+            } else 0f
+            
+            val handPercentile = if (handValues.isNotEmpty()) {
+                val idx = ((handValues.size - 1) * motionPercentile).toInt()
+                handValues[idx]
+            } else 0f
+            
+            return Pair(armPercentile, handPercentile)
         }
     }
 
     /**
      * Update activity state based on motion patterns.
+     * Uses pattern-based detection: arms → hands for sign start, hands → arms → rest for sign end.
      */
     private fun updateState(): ActivityState {
-        val avgMotion = getAverageMotion()
-        val isMotionAboveThreshold = avgMotion >= motionThreshold
+        val (armMotion, handMotion) = getArmAndHandMotion()
+        val combinedMotion = armMotion * 0.4f + handMotion * 0.6f
         
-        // Enhanced debug logging to diagnose issues
-        if (motionHistorySize % 10 == 0 && motionHistorySize > 0) {
-            Log.d(TAG, "Motion: avg=$avgMotion, threshold=$motionThreshold, above=${isMotionAboveThreshold}, " +
-                    "state=$currentState, activeFrames=$consecutiveActiveFrames, idleFrames=$consecutiveIdleFrames, " +
-                    "historySize=$motionHistorySize")
+        // Pattern-based thresholds
+        // Sign start: require arm motion first (arms moving indicates sign preparation)
+        // Active signing: require hand motion (hands moving indicates active signing)
+        // Sign end: both below threshold (resting)
+        val hasArmMotion = armMotion >= armMotionThreshold
+        val hasHandMotion = handMotion >= handMotionThreshold
+        val hasSignificantMotion = combinedMotion >= handMotionThreshold
+        
+        // Enhanced debug logging
+        if (motionHistorySize % 30 == 0 && motionHistorySize > 0) {
+            Log.d(TAG, "Motion: arm=$armMotion, hand=$handMotion, combined=$combinedMotion, " +
+                    "state=$currentState, activeFrames=$consecutiveActiveFrames, idleFrames=$consecutiveIdleFrames")
         }
         
-        // Log state transitions immediately
         val oldState = currentState
 
         when (currentState) {
             ActivityState.IDLE -> {
-                if (isMotionAboveThreshold) {
+                // Sign start pattern: arms start moving first, then hands
+                // Require either: (1) both arm and hand motion, or (2) sustained hand motion
+                if (hasSignificantMotion && (hasArmMotion || hasHandMotion)) {
                     consecutiveActiveFrames++
                     consecutiveIdleFrames = 0
                     
                     if (consecutiveActiveFrames >= activeFramesRequired) {
                         currentState = ActivityState.ACTIVE
-                        Log.i(TAG, "State: IDLE → ACTIVE (motion: $avgMotion, threshold: $motionThreshold)")
+                        Log.i(TAG, "State: IDLE → ACTIVE (arm=$armMotion, hand=$handMotion)")
                     } else {
                         currentState = ActivityState.TRANSITION
                         if (oldState != ActivityState.TRANSITION) {
-                            Log.d(TAG, "State: IDLE → TRANSITION (motion: $avgMotion, frames: $consecutiveActiveFrames/$activeFramesRequired)")
+                            Log.d(TAG, "State: IDLE → TRANSITION (arm=$armMotion, hand=$handMotion, frames: $consecutiveActiveFrames/$activeFramesRequired)")
                         }
                     }
                 } else {
@@ -186,17 +268,18 @@ class ActivityDetector(
             }
             
             ActivityState.ACTIVE -> {
-                if (!isMotionAboveThreshold) {
+                // Sign end pattern: motion stops (both arms and hands below threshold)
+                if (!hasSignificantMotion) {
                     consecutiveIdleFrames++
                     consecutiveActiveFrames = 0
                     
                     if (consecutiveIdleFrames >= idleFramesRequired) {
                         currentState = ActivityState.IDLE
-                        Log.i(TAG, "State: ACTIVE → IDLE (motion: $avgMotion)")
+                        Log.i(TAG, "State: ACTIVE → IDLE (arm=$armMotion, hand=$handMotion)")
                     } else {
                         currentState = ActivityState.TRANSITION
                         if (oldState != ActivityState.TRANSITION) {
-                            Log.d(TAG, "State: ACTIVE → TRANSITION (motion: $avgMotion, frames: $consecutiveIdleFrames/$idleFramesRequired)")
+                            Log.d(TAG, "State: ACTIVE → TRANSITION (arm=$armMotion, hand=$handMotion, frames: $consecutiveIdleFrames/$idleFramesRequired)")
                         }
                     }
                 } else {
@@ -206,19 +289,19 @@ class ActivityDetector(
             }
             
             ActivityState.TRANSITION -> {
-                if (isMotionAboveThreshold) {
+                if (hasSignificantMotion) {
                     consecutiveActiveFrames++
                     consecutiveIdleFrames = 0
                     if (consecutiveActiveFrames >= activeFramesRequired) {
                         currentState = ActivityState.ACTIVE
-                        Log.i(TAG, "State: TRANSITION → ACTIVE (motion: $avgMotion)")
+                        Log.i(TAG, "State: TRANSITION → ACTIVE (arm=$armMotion, hand=$handMotion)")
                     }
                 } else {
                     consecutiveIdleFrames++
                     consecutiveActiveFrames = 0
                     if (consecutiveIdleFrames >= idleFramesRequired) {
                         currentState = ActivityState.IDLE
-                        Log.i(TAG, "State: TRANSITION → IDLE (motion: $avgMotion)")
+                        Log.i(TAG, "State: TRANSITION → IDLE (arm=$armMotion, hand=$handMotion)")
                     }
                 }
             }
@@ -245,8 +328,9 @@ class ActivityDetector(
             previousKeypoints = null
             motionHistorySize = 0
             motionHistoryIndex = 0
-            // Clear array by setting to zero (optional, but cleaner)
-            motionHistory.fill(0f)
+            // Clear arrays by setting to zero
+            armMotionHistory.fill(0f)
+            handMotionHistory.fill(0f)
             consecutiveActiveFrames = 0
             consecutiveIdleFrames = 0
             currentState = ActivityState.IDLE
