@@ -54,7 +54,6 @@ class RecognitionPipeline(
 ) : MediaPipeProcessor.KeypointListener {
     companion object {
         private const val TAG = "RecognitionPipeline"
-        private const val INFERENCE_INTERVAL = 10  // Run inference every N frames
         private const val HEALTH_CHECK_INTERVAL_MS = 2000L  // Check pipeline health every 2 seconds
         private const val FRAME_TIMEOUT_MS = 3000L  // Consider pipeline frozen after 3 seconds
     }
