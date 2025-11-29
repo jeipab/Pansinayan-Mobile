@@ -19,27 +19,40 @@ class AdaptiveBufferManager(
     }
 
     // Frame storage with absolute frame indices
+    // Note: Frame indices are reset periodically to prevent overflow
     data class FrameData(
         val keypoints: FloatArray?,
-        val frameIndex: Int,
+        val frameIndex: Int,  // Absolute frame index (may be reset periodically)
         val timestamp: Long
     )
 
     private val buffer = ArrayDeque<FrameData>()
     private var frameCounter: Int = 0
+    private var frameOffset: Int = 0  // Offset to apply to frameCounter to get absolute frame
 
     /**
      * Add a new keypoint frame to the buffer.
+     * Frame indices are kept manageable by resetting periodically.
      */
     @Synchronized
     fun addFrame(keypoints: FloatArray?) {
+        // Reset frame counter periodically to prevent overflow (every 100k frames)
+        // This keeps frame numbers manageable while preserving relative ordering
+        if (frameCounter >= 100_000) {
+            frameOffset += frameCounter
+            frameCounter = 0
+            Log.d(TAG, "Frame counter reset, new offset: $frameOffset")
+        }
+        
+        val absoluteFrameIndex = frameOffset + frameCounter
         val frameData = FrameData(
             keypoints = keypoints,
-            frameIndex = frameCounter++,
+            frameIndex = absoluteFrameIndex,
             timestamp = System.currentTimeMillis()
         )
         
         buffer.addLast(frameData)
+        frameCounter++
         
         // Remove oldest frames if buffer exceeds max size
         while (buffer.size > maxBufferSize) {
@@ -67,9 +80,11 @@ class AdaptiveBufferManager(
         }
 
         if (signFrames.isEmpty()) {
-            Log.w(TAG, "No frames found for sign [$signStartFrame-$signEndFrame]")
+            Log.w(TAG, "No frames found for sign [$signStartFrame-$signEndFrame], buffer range: [${buffer.firstOrNull()?.frameIndex}-${buffer.lastOrNull()?.frameIndex}]")
             return null
         }
+        
+        Log.d(TAG, "Found ${signFrames.size} frames for sign [$signStartFrame-$signEndFrame]")
 
         // Calculate padding to reach window size
         val signDuration = signEndFrame - signStartFrame + 1
@@ -94,10 +109,19 @@ class AdaptiveBufferManager(
 
         // Convert to keypoint array and interpolate gaps
         val keypointSequence = windowFrames.map { it.keypoints }.toTypedArray()
+        
+        // Count valid keypoints in the sequence
+        val validKeypointFrames = keypointSequence.count { frame ->
+            frame != null && frame.any { v -> kotlin.math.abs(v) > 0.001f }
+        }
+        Log.d(TAG, "Keypoint sequence: ${keypointSequence.size} frames, $validKeypointFrames with valid keypoints")
+        
         val interpolated = interpolateGaps(keypointSequence)
 
         // Pad or truncate to exact window size
-        return adjustToWindowSize(interpolated)
+        val finalSequence = adjustToWindowSize(interpolated)
+        Log.d(TAG, "Final sequence size: ${finalSequence.size} frames")
+        return finalSequence
     }
 
     /**

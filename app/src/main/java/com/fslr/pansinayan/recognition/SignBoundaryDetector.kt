@@ -212,11 +212,13 @@ class SignBoundaryDetector(
 
     /**
      * Get sign start frame (if sign is active or completed).
+     * Preserves the start frame even after reset to allow inference to access it.
      */
     fun getSignStartFrame(): Int? = if (currentState != SignState.IDLE) signStartFrame else null
 
     /**
      * Get sign end frame (if sign is completed).
+     * Preserves the end frame even if state has changed, as long as we have a valid sign.
      */
     fun getSignEndFrame(): Int? = if (currentState == SignState.SIGN_COMPLETE) lastActiveFrame else null
 

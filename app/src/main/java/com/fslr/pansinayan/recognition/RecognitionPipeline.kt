@@ -72,6 +72,7 @@ class RecognitionPipeline(
     private var totalInferenceTimeMs: Long = 0L
     private var inferenceCount: Long = 0L
     private var debugLogging: Boolean = false
+    private var lastProcessedSignEndFrame: Int = -1  // Track last processed sign to prevent duplicates
 
     // Coroutine scope for async operations
     private val pipelineScope = CoroutineScope(Dispatchers.Default + SupervisorJob())
@@ -230,6 +231,7 @@ class RecognitionPipeline(
                 ctcAggregator.clear()
                 totalInferenceTimeMs = 0L
                 inferenceCount = 0L
+                lastProcessedSignEndFrame = -1
 
                 lastFrameTime.set(System.currentTimeMillis())
                 lastKeypointTime.set(System.currentTimeMillis())
@@ -277,7 +279,16 @@ class RecognitionPipeline(
 
         isRunning.set(true)
         isPaused.set(false)
-        frameCounter.set(0)
+        // Reset frame counter periodically to prevent overflow
+        // Use modulo to keep it manageable (reset every 1M frames)
+        val currentFrame = frameCounter.get()
+        if (currentFrame >= 1_000_000) {
+            frameCounter.set(0)
+            Log.d(TAG, "Frame counter reset to prevent overflow")
+        } else if (currentFrame == 0) {
+            // Only reset to 0 on first start, not on resume
+            frameCounter.set(0)
+        }
         lastFrameTime.set(System.currentTimeMillis())
         lastKeypointTime.set(System.currentTimeMillis())
         
@@ -330,14 +341,14 @@ class RecognitionPipeline(
                     }
                 }
                 
-                // Add to buffer
+                // Add to buffer - ensure all keypoints are captured
                 bufferManager.addFrame(keypoints)
                 
                 // Process activity detection (returns state and motion together to avoid race conditions)
                 // Log keypoint validity for debugging
                 if (currentFrame % 60 == 0 && keypoints != null) {
                     val nonZeroCount = keypoints.count { it != 0f }
-                    Log.d(TAG, "Frame $currentFrame: keypoints valid=$nonZeroCount/178")
+                    Log.d(TAG, "Frame $currentFrame: keypoints valid=$nonZeroCount/178, buffer size=${bufferManager.getBufferSize()}")
                 }
                 
                 val (activityState, currentMotion) = activityDetector.processFrame(keypoints)
@@ -373,20 +384,70 @@ class RecognitionPipeline(
 
     /**
      * Trigger inference based on sign boundary detection.
+     * 
+     * Flow:
+     * 1. IDLE - no signing
+     * 2. ACTIVE - user is signing, keypoints are being captured
+     * 3. SIGN_COMPLETE - sign ended, NOW make inference call (activity may be IDLE by now, which is expected)
+     * 4. Reset and return to IDLE
      */
     private suspend fun triggerInference(reason: TriggerReason, currentFrame: Int) {
         try {
+            val boundaryState = boundaryDetector.getState()
+            
+            // For SignComplete, we expect boundary state to be SIGN_COMPLETE
+            // Activity state may already be IDLE (sign ended), which is correct
+            if (reason is TriggerReason.SignComplete) {
+                if (boundaryState != SignBoundaryDetector.SignState.SIGN_COMPLETE) {
+                    Log.w(TAG, "Inference triggered with SignComplete but boundary state is $boundaryState - skipping")
+                    return
+                }
+                
+                // Prevent duplicate inference for the same sign
+                val signEndFrame = boundaryDetector.getSignEndFrame()
+                if (signEndFrame != null && signEndFrame == lastProcessedSignEndFrame) {
+                    Log.d(TAG, "Sign end frame $signEndFrame already processed - skipping duplicate inference")
+                    return
+                }
+                
+                if (signEndFrame != null) {
+                    lastProcessedSignEndFrame = signEndFrame
+                }
+                
+                Log.i(TAG, "Sign completed - triggering inference (boundary: $boundaryState, endFrame: $signEndFrame)")
+            }
+            
+            // For LongActivePeriod, ensure we're actually active
+            if (reason is TriggerReason.LongActivePeriod) {
+                val activityState = activityDetector.getState()
+                if (activityState == ActivityDetector.ActivityState.IDLE) {
+                    Log.w(TAG, "LongActivePeriod trigger while IDLE - skipping")
+                    return
+                }
+            }
+
             val windowSeq = when (reason) {
                 is TriggerReason.SignComplete -> {
                     // Get sign boundaries from boundary detector
                     val signStartFrame = boundaryDetector.getSignStartFrame() ?: return
                     val signEndFrame = boundaryDetector.getSignEndFrame() ?: return
+                    Log.d(TAG, "Extracting sign window: frames [$signStartFrame-$signEndFrame]")
                     bufferManager.extractSignWindow(signStartFrame, signEndFrame)
                 }
                 is TriggerReason.LongActivePeriod -> {
+                    Log.d(TAG, "Extracting long active period window: frames [${reason.signStartFrame}-${reason.signEndFrame}]")
                     bufferManager.extractSignWindow(reason.signStartFrame, reason.signEndFrame)
                 }
-            } ?: return
+            } ?: run {
+                Log.w(TAG, "Failed to extract window for inference")
+                return
+            }
+
+            // Log keypoint capture info
+            val validKeypointCount = windowSeq.count { frame ->
+                frame.any { v -> kotlin.math.abs(v) > 0.001f }
+            }
+            Log.d(TAG, "Inference window: ${windowSeq.size} frames, $validKeypointCount with valid keypoints")
 
             // Check for mostly zero frames (indicates missing data)
             val zeroFrameCount = windowSeq.count { frame -> 
@@ -430,12 +491,21 @@ class RecognitionPipeline(
             }
 
             val tokens = CTCDecoder.greedy(logProbs, ctcRunner.meta.blank_id)
-            val CONFIDENCE_THRESHOLD = 0.65f
+            val CONFIDENCE_THRESHOLD = 0f  // Set to 0 to allow all model outputs
             val filteredTokens = tokens.filter { it.confidence >= CONFIDENCE_THRESHOLD }
+
+            // Log all decoded tokens for debugging
+            if (tokens.isNotEmpty()) {
+                Log.d(TAG, "Decoded ${tokens.size} tokens: ${tokens.map { "${it.id}(${String.format("%.3f", it.confidence)})" }.joinToString(", ")}")
+            } else {
+                Log.d(TAG, "No tokens decoded from model output")
+            }
 
             // Estimate window start frame
             val windowStartAbs = currentFrame - windowSeq.size + 1
             val newOnes = ctcAggregator.addWindowTokens(windowStartAbs, filteredTokens)
+            
+            Log.d(TAG, "After aggregation: ${newOnes.size} new tokens, activity state=${activityDetector.getState()}")
 
             if (newOnes.isNotEmpty()) {
                 for (tk in newOnes) {
@@ -489,10 +559,18 @@ class RecognitionPipeline(
                     val glossConfStr = "%.2f".format(tk.confidence)
                     Log.i(TAG, "CTC token: ${tk.id} $glossLabel (cat: $categoryId $categoryLabel $catConfStr) conf=$glossConfStr frames=[${tk.startT}-${tk.endT}]")
                 }
+            } else {
+                Log.d(TAG, "No new tokens after aggregation - inference completed with no results")
             }
             
-            // Reset boundary detector after processing
+            // Reset boundary detector AFTER inference completes
+            // This ensures we're ready for the next sign
             boundaryDetector.reset()
+            // Clear the processed sign tracking for the next sign
+            if (reason is TriggerReason.SignComplete) {
+                lastProcessedSignEndFrame = -1
+            }
+            Log.d(TAG, "Boundary detector reset - ready for next sign")
         } catch (e: Exception) {
             Log.e(TAG, "CTC inference failed", e)
         }
@@ -646,6 +724,7 @@ class RecognitionPipeline(
         activityDetector.reset()
         boundaryDetector.resetToIdle()
         inferenceTrigger.reset()
+        lastProcessedSignEndFrame = -1
 
         Log.i(TAG, "Pipeline stopped")
     }
@@ -758,6 +837,7 @@ class RecognitionPipeline(
                 // Reset perf stats
                 totalInferenceTimeMs = 0L
                 inferenceCount = 0L
+                lastProcessedSignEndFrame = -1
 
                 // Warm-up run with a zero window to allocate tensors
                 try {

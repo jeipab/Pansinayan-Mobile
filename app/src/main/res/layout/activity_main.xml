@@ -41,7 +41,7 @@
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintTop_toTopOf="parent" />
 
-    <!-- Debug Info Card (Top Left, below model selection) -->
+    <!-- Debug Info Card (Top Left, below motion state) -->
     <androidx.cardview.widget.CardView
         android:id="@+id/debug_info_card"
         android:layout_width="wrap_content"
@@ -52,7 +52,7 @@
         app:cardCornerRadius="8dp"
         app:cardElevation="0dp"
         app:cardBackgroundColor="#CC000000"
-        app:layout_constraintTop_toBottomOf="@id/radio_model_selection"
+        app:layout_constraintTop_toBottomOf="@id/motion_state_text"
         app:layout_constraintStart_toStartOf="parent">
 
         <TextView
@@ -133,6 +133,26 @@
             android:textSize="12sp"
             android:buttonTint="@color/primary_blue" />
     </RadioGroup>
+
+    <!-- Motion State Indicator (Always Visible) -->
+    <TextView
+        android:id="@+id/motion_state_text"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:background="@drawable/bg_rounded_dark"
+        android:paddingStart="12dp"
+        android:paddingEnd="12dp"
+        android:paddingTop="6dp"
+        android:paddingBottom="6dp"
+        android:text="State: IDLE"
+        android:textSize="12sp"
+        android:textColor="@android:color/white"
+        android:textStyle="bold"
+        android:gravity="center"
+        app:layout_constraintTop_toBottomOf="@id/radio_model_selection"
+        app:layout_constraintStart_toStartOf="@id/radio_model_selection"
+        app:layout_constraintEnd_toEndOf="@id/radio_model_selection" />
 
     <!-- Record Button (FAB - Bottom Right) -->
     <com.google.android.material.floatingactionbutton.FloatingActionButton

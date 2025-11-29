@@ -71,6 +71,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var transcriptCategoryTextView: TextView
     private lateinit var statsTextView: TextView
     private lateinit var debugInfoTextView: TextView
+    private lateinit var motionStateTextView: TextView
     private lateinit var statsCard: View
     private lateinit var debugInfoCard: View
     private lateinit var overlayView: OverlayView
@@ -183,6 +184,7 @@ class MainActivity : AppCompatActivity() {
         transcriptCategoryTextView = findViewById(R.id.transcript_category)
         statsTextView = findViewById(R.id.stats_text)
         debugInfoTextView = findViewById(R.id.debug_info_text)
+        motionStateTextView = findViewById(R.id.motion_state_text)
         statsCard = findViewById(R.id.stats_card)
         debugInfoCard = findViewById(R.id.debug_info_card)
         overlayView = findViewById(R.id.overlay_view)
@@ -530,6 +532,7 @@ class MainActivity : AppCompatActivity() {
 
             // Start periodic stats update
             startStatsUpdater()
+            startMotionStateUpdater()
 
         } catch (e: Exception) {
             Log.e(TAG, "Failed to setup pipeline", e)
@@ -670,6 +673,44 @@ class MainActivity : AppCompatActivity() {
                 }
             }
         }
+    }
+
+    /**
+     * Start periodic motion state updater (always visible).
+     */
+    private fun startMotionStateUpdater() {
+        lifecycleScope.launch(Dispatchers.Main) {
+            while (true) {
+                delay(500)  // Update every 500ms for real-time feel
+                
+                try {
+                    if (::recognitionPipeline.isInitialized) {
+                        val stats = recognitionPipeline.getStats()
+                        updateMotionState(stats.temporalStats)
+                    }
+                } catch (e: Exception) {
+                    // Ignore if pipeline not ready
+                    motionStateTextView.text = "State: IDLE"
+                }
+            }
+        }
+    }
+
+    /**
+     * Update motion state UI component.
+     */
+    private fun updateMotionState(temporalStats: String) {
+        // Parse the temporal stats string: "IDLE / IDLE (motion: 0.0000)"
+        // Extract activity state and motion value
+        val activityState = temporalStats.split(" / ").firstOrNull() ?: "IDLE"
+        val motionMatch = Regex("motion: ([0-9.]+)").find(temporalStats)
+        val motionValue = motionMatch?.groupValues?.get(1)?.toFloatOrNull() ?: 0f
+        
+        // Format motion value to 2 decimal places
+        val formattedMotion = String.format("%.2f", motionValue)
+        
+        // Update UI
+        motionStateTextView.text = "State: $activityState"
     }
 
     override fun onResume() {

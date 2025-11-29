@@ -10,11 +10,11 @@ import kotlin.math.sqrt
  * This enables inference to be triggered only when user is actively signing.
  */
 class ActivityDetector(
-    private val armMotionThreshold: Float = 0.003f,    // Higher threshold for arm movement (sign start)
-    private val handMotionThreshold: Float = 0.002f,   // Medium threshold for hand movement (active signing)
-    private val jitterFilterThreshold: Float = 0.0005f, // Lower threshold to filter out noise
-    private val activeFramesRequired: Int = 8,          // Increased - require sustained motion
-    private val idleFramesRequired: Int = 20,           // Increased - require sustained rest
+    private val armMotionThreshold: Float = 0.008f,    // Significantly higher threshold for arm movement (sign start)
+    private val handMotionThreshold: Float = 0.006f,   // Higher threshold for hand movement (active signing)
+    private val jitterFilterThreshold: Float = 0.001f, // Increased to filter out more noise
+    private val activeFramesRequired: Int = 10,          // Require more sustained motion
+    private val idleFramesRequired: Int = 25,           // Require more sustained rest
     private val motionWindowSize: Int = 15,             // Larger window for better smoothing
     private val motionPercentile: Float = 0.75f         // Use 75th percentile instead of average
 ) {
@@ -39,12 +39,17 @@ class ActivityDetector(
     private var consecutiveIdleFrames = 0
     @Volatile
     private var currentState = ActivityState.IDLE
+    private var framesProcessed: Long = 0L  // Track total frames processed
     
     // Pose keypoint indices for arms (shoulders and elbows)
     // MediaPipe pose: 11=left shoulder, 12=right shoulder, 13=left elbow, 14=right elbow
     // In our array: pose is 0-49 (25 points × 2), so:
     // Left shoulder: ~22-23, Right shoulder: ~24-25, Left elbow: ~26-27, Right elbow: ~28-29
     private val armKeypointIndices = listOf(22, 23, 24, 25, 26, 27, 28, 29) // Shoulders and elbows
+    
+    // Hand keypoint indices: 50-133 (42 left + 42 right = 84 values)
+    private val handKeypointStart = 50
+    private val handKeypointEnd = 134
 
     /**
      * Process new keypoints and update activity state.
@@ -61,9 +66,27 @@ class ActivityDetector(
         }
 
         val (armMotion, handMotion) = computeMotionScores(keypoints)
+        val handsPresent = checkHandsPresent(keypoints)
         updateMotionScores(armMotion, handMotion)
         
-        val state = updateState()
+        framesProcessed++
+        // Periodically reset motion history to prevent state degradation (every 10k frames)
+        // This ensures the detector doesn't get stuck in a state due to stale history
+        if (framesProcessed % 10_000L == 0L && framesProcessed > 0) {
+            Log.d(TAG, "Periodic motion history refresh (frames processed: $framesProcessed)")
+            // Don't reset state, but refresh motion history to prevent drift
+            synchronized(motionHistoryLock) {
+                // Clear oldest half of history to allow fresh data
+                val clearCount = motionHistorySize / 2
+                for (i in 0 until clearCount) {
+                    val idx = (motionHistoryIndex - motionHistorySize + i + motionWindowSize) % motionWindowSize
+                    armMotionHistory[idx] = 0f
+                    handMotionHistory[idx] = 0f
+                }
+            }
+        }
+        
+        val state = updateState(handsPresent)
         val avgMotion = getAverageMotion()
         return Pair(state, avgMotion)
     }
@@ -119,6 +142,56 @@ class ActivityDetector(
         } else 0f
         
         return Pair(armScore, handScore)
+    }
+
+    /**
+     * Check if hands are actually present (not just zeros).
+     * Returns true if at least one hand has valid keypoints.
+     * 
+     * Hand keypoints structure:
+     * - Left hand: indices 50-91 (21 points × 2 = 42 values: x0,y0, x1,y1, ..., x20,y20)
+     * - Right hand: indices 92-133 (21 points × 2 = 42 values: x0,y0, x1,y1, ..., x20,y20)
+     */
+    private fun checkHandsPresent(keypoints: FloatArray): Boolean {
+        if (keypoints.size < handKeypointEnd) return false
+        
+        // Check left hand (indices 50-91, 21 keypoints × 2 = 42 values)
+        // Each keypoint is stored as (x, y) pair
+        var leftHandValidKeypoints = 0
+        for (i in 0 until 21) {
+            val xIdx = handKeypointStart + (i * 2)
+            val yIdx = handKeypointStart + (i * 2) + 1
+            if (xIdx < keypoints.size && yIdx < keypoints.size) {
+                val x = keypoints[xIdx]
+                val y = keypoints[yIdx]
+                // Keypoint is valid if at least one coordinate is non-zero
+                // MediaPipe uses (0, 0) to indicate missing landmarks
+                if (x != 0f || y != 0f) {
+                    leftHandValidKeypoints++
+                }
+            }
+        }
+        
+        // Check right hand (indices 92-133, 21 keypoints × 2 = 42 values)
+        var rightHandValidKeypoints = 0
+        val rightHandStart = handKeypointStart + 42
+        for (i in 0 until 21) {
+            val xIdx = rightHandStart + (i * 2)
+            val yIdx = rightHandStart + (i * 2) + 1
+            if (xIdx < keypoints.size && yIdx < keypoints.size) {
+                val x = keypoints[xIdx]
+                val y = keypoints[yIdx]
+                // Keypoint is valid if at least one coordinate is non-zero
+                // MediaPipe uses (0, 0) to indicate missing landmarks
+                if (x != 0f || y != 0f) {
+                    rightHandValidKeypoints++
+                }
+            }
+        }
+        
+        // Require at least 10 valid keypoints per hand to consider it present
+        // This ensures we have actual hand detection, not just noise
+        return leftHandValidKeypoints >= 10 || rightHandValidKeypoints >= 10
     }
 
     /**
@@ -223,22 +296,27 @@ class ActivityDetector(
     /**
      * Update activity state based on motion patterns.
      * Uses pattern-based detection: arms → hands for sign start, hands → arms → rest for sign end.
+     * Now requires hands to be present for ACTIVE state.
      */
-    private fun updateState(): ActivityState {
+    private fun updateState(handsPresent: Boolean): ActivityState {
         val (armMotion, handMotion) = getArmAndHandMotion()
         val combinedMotion = armMotion * 0.4f + handMotion * 0.6f
         
         // Pattern-based thresholds
-        // Sign start: require arm motion first (arms moving indicates sign preparation)
-        // Active signing: require hand motion (hands moving indicates active signing)
-        // Sign end: both below threshold (resting)
+        // Sign start: require significant arm motion AND hands present
+        // Active signing: require hand motion AND hands present
+        // Sign end: hands disappear OR motion stops (both arms and hands below threshold)
         val hasArmMotion = armMotion >= armMotionThreshold
         val hasHandMotion = handMotion >= handMotionThreshold
         val hasSignificantMotion = combinedMotion >= handMotionThreshold
         
+        // Stricter requirement: need both significant motion AND hands present for ACTIVE
+        val canBeActive = hasSignificantMotion && handsPresent && (hasArmMotion || hasHandMotion)
+        
         // Enhanced debug logging
         if (motionHistorySize % 30 == 0 && motionHistorySize > 0) {
             Log.d(TAG, "Motion: arm=$armMotion, hand=$handMotion, combined=$combinedMotion, " +
+                    "handsPresent=$handsPresent, canBeActive=$canBeActive, " +
                     "state=$currentState, activeFrames=$consecutiveActiveFrames, idleFrames=$consecutiveIdleFrames")
         }
         
@@ -246,19 +324,19 @@ class ActivityDetector(
 
         when (currentState) {
             ActivityState.IDLE -> {
-                // Sign start pattern: arms start moving first, then hands
-                // Require either: (1) both arm and hand motion, or (2) sustained hand motion
-                if (hasSignificantMotion && (hasArmMotion || hasHandMotion)) {
+                // Sign start pattern: require significant arm motion AND hands present
+                // This ensures we don't trigger on just face/head movement
+                if (canBeActive) {
                     consecutiveActiveFrames++
                     consecutiveIdleFrames = 0
                     
                     if (consecutiveActiveFrames >= activeFramesRequired) {
                         currentState = ActivityState.ACTIVE
-                        Log.i(TAG, "State: IDLE → ACTIVE (arm=$armMotion, hand=$handMotion)")
+                        Log.i(TAG, "State: IDLE → ACTIVE (arm=$armMotion, hand=$handMotion, handsPresent=$handsPresent)")
                     } else {
                         currentState = ActivityState.TRANSITION
                         if (oldState != ActivityState.TRANSITION) {
-                            Log.d(TAG, "State: IDLE → TRANSITION (arm=$armMotion, hand=$handMotion, frames: $consecutiveActiveFrames/$activeFramesRequired)")
+                            Log.d(TAG, "State: IDLE → TRANSITION (arm=$armMotion, hand=$handMotion, handsPresent=$handsPresent, frames: $consecutiveActiveFrames/$activeFramesRequired)")
                         }
                     }
                 } else {
@@ -268,40 +346,42 @@ class ActivityDetector(
             }
             
             ActivityState.ACTIVE -> {
-                // Sign end pattern: motion stops (both arms and hands below threshold)
-                if (!hasSignificantMotion) {
+                // Sign end pattern: hands disappear OR motion stops
+                // If hands are gone or motion is below threshold, start transitioning to IDLE
+                if (!handsPresent || !hasSignificantMotion) {
                     consecutiveIdleFrames++
                     consecutiveActiveFrames = 0
                     
                     if (consecutiveIdleFrames >= idleFramesRequired) {
                         currentState = ActivityState.IDLE
-                        Log.i(TAG, "State: ACTIVE → IDLE (arm=$armMotion, hand=$handMotion)")
+                        Log.i(TAG, "State: ACTIVE → IDLE (arm=$armMotion, hand=$handMotion, handsPresent=$handsPresent)")
                     } else {
                         currentState = ActivityState.TRANSITION
                         if (oldState != ActivityState.TRANSITION) {
-                            Log.d(TAG, "State: ACTIVE → TRANSITION (arm=$armMotion, hand=$handMotion, frames: $consecutiveIdleFrames/$idleFramesRequired)")
+                            Log.d(TAG, "State: ACTIVE → TRANSITION (arm=$armMotion, hand=$handMotion, handsPresent=$handsPresent, frames: $consecutiveIdleFrames/$idleFramesRequired)")
                         }
                     }
                 } else {
+                    // Still active - reset counters
                     consecutiveIdleFrames = 0
                     consecutiveActiveFrames++
                 }
             }
             
             ActivityState.TRANSITION -> {
-                if (hasSignificantMotion) {
+                if (canBeActive) {
                     consecutiveActiveFrames++
                     consecutiveIdleFrames = 0
                     if (consecutiveActiveFrames >= activeFramesRequired) {
                         currentState = ActivityState.ACTIVE
-                        Log.i(TAG, "State: TRANSITION → ACTIVE (arm=$armMotion, hand=$handMotion)")
+                        Log.i(TAG, "State: TRANSITION → ACTIVE (arm=$armMotion, hand=$handMotion, handsPresent=$handsPresent)")
                     }
                 } else {
                     consecutiveIdleFrames++
                     consecutiveActiveFrames = 0
                     if (consecutiveIdleFrames >= idleFramesRequired) {
                         currentState = ActivityState.IDLE
-                        Log.i(TAG, "State: TRANSITION → IDLE (arm=$armMotion, hand=$handMotion)")
+                        Log.i(TAG, "State: TRANSITION → IDLE (arm=$armMotion, hand=$handMotion, handsPresent=$handsPresent)")
                     }
                 }
             }
@@ -334,6 +414,7 @@ class ActivityDetector(
             consecutiveActiveFrames = 0
             consecutiveIdleFrames = 0
             currentState = ActivityState.IDLE
+            framesProcessed = 0L
         }
         Log.d(TAG, "Activity detector reset")
     }
