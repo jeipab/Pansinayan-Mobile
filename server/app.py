@@ -418,8 +418,15 @@ async def predict(request: InferenceRequest) -> InferenceResponse:
     This endpoint accepts a sequence of MediaPipe keypoints and returns
     CTC log probabilities for sign language recognition.
     
+    The client uses activity-based inference, sending sign-aligned windows
+    (variable length) when sign boundaries are detected. The server processes
+    whatever sequence length is received (1-300 frames).
+    
     Args:
         request: InferenceRequest containing keypoints and model selection
+                 - keypoints: Variable-length sequence [T, 178] where T is 
+                   determined by sign duration (1-300 frames)
+                 - model_type: "transformer" or "gru"
         
     Returns:
         InferenceResponse with CTC predictions and timing information

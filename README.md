@@ -9,7 +9,7 @@
 ## 🚀 Features
 
 - **Real-time Recognition:** 30 FPS camera feed with MediaPipe keypoint extraction
-- **Continuous CTC:** Sliding window (150 frames) processes multiple signs per sequence
+- **Activity-Based Inference:** Sign-aligned windows (variable length) process complete signs when detected
 - **Dual Output:** Displays both **gloss** (word) and **category** for each sign
 - **Dual-Model Support:** Switch between Transformer (accuracy) and GRU (speed) models
 - **Skeleton Visualization:** Real-time pose and hand overlay with toggle
@@ -53,7 +53,9 @@ Example: Sign "GOOD MORNING EGG" → Outputs: "GOOD MORNING" [GREETINGS], "EGG" 
 
 ### **3. Model Inference**
 
-- **TFLiteModelRunner** - Runs CTC models (Input: `[1, 150, 178]` → Output: per-frame gloss + category)
+- **ModelRunner** - Runs CTC models (Input: `[1, T, 178]` → Output: per-frame gloss + category)
+  - Supports both offline (PyTorch Lite) and online (remote server) modes
+  - Processes variable-length sign-aligned windows
 - **CTCDecoder** - Decodes CTC outputs: collapses repeats, removes blanks, segments signs
 
 ### **4. Recognition Pipeline**
@@ -74,14 +76,14 @@ Example: Sign "GOOD MORNING EGG" → Outputs: "GOOD MORNING" [GREETINGS], "EGG" 
 
 ### Input
 
-- **Shape:** `[1, 150, 178]` (150 frames × 89 keypoints × 2 coordinates)
+- **Shape:** `[1, T, 178]` where T is variable (sign-aligned window length, 1-300 frames)
 - **Type:** Float32
-- **Content:** MediaPipe keypoints extracted from sign-aligned windows (typically 150 frames)
+- **Content:** MediaPipe keypoints extracted from sign-aligned windows (variable length based on actual sign duration)
 
 ### Output
 
-- **Gloss:** `[1, 150, 106]` - Per-frame predictions (105 signs + 1 blank)
-- **Category:** `[1, 150, 10]` - Per-frame predictions (10 categories)
+- **Gloss:** `[1, T, 106]` - Per-frame predictions (105 signs + 1 blank) for T frames
+- **Category:** `[1, T, 10]` - Per-frame predictions (10 categories) for T frames
 - **Decoded:** Both decoded independently via CTC, aligned by frame timing
 
 ### Models

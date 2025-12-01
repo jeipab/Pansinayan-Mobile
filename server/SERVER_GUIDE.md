@@ -211,7 +211,8 @@ GET /health
 # Inference
 POST /predict
 {
-  "keypoints": [[...], [...], ...],  // [T, 178]
+  "keypoints": [[...], [...], ...],  // [T, 178] - Variable length (1-300 frames)
+                                      // T is determined by sign-aligned window from activity-based detection
   "model_type": "transformer"         // or "gru"
 }
 
