@@ -36,7 +36,7 @@ class RemoteModelRunner(
     /**
      * Run inference asynchronously on remote server.
      */
-    suspend fun runAsync(sequence: Array<FloatArray>): CtcOutputs = withContext(Dispatchers.IO) {
+    override suspend fun runAsync(sequence: Array<FloatArray>): CtcOutputs = withContext(Dispatchers.IO) {
         try {
             val startTime = System.currentTimeMillis()
 
@@ -48,13 +48,31 @@ class RemoteModelRunner(
                 model_type = modelType
             )
 
-            Log.d(TAG, "Sending ${sequence.size} frames to server (model=$modelType)...")
+            Log.i(TAG, "=== SENDING INFERENCE REQUEST ===")
+            Log.i(TAG, "Sequence length: ${sequence.size} frames")
+            Log.i(TAG, "Model type: $modelType")
+            Log.i(TAG, "Server URL: ${NetworkClient.getServerUrl()}")
+            Log.i(TAG, "Keypoints per frame: ${sequence.firstOrNull()?.size ?: 0}")
 
             // Send to server
+            Log.d(TAG, "Calling NetworkClient.getApi().predict()...")
             val response = NetworkClient.getApi().predict(request)
+            Log.i(TAG, "Response received: code=${response.code()}, isSuccessful=${response.isSuccessful}")
 
             if (!response.isSuccessful) {
-                throw RuntimeException("Server error: ${response.code()} ${response.message()}")
+                var errorBody: String? = null
+                try {
+                    errorBody = response.errorBody()?.string()
+                } catch (e: Exception) {
+                    Log.e(TAG, "Failed to read error body: ${e.message}")
+                }
+                Log.e(TAG, "=== SERVER ERROR RESPONSE ===")
+                Log.e(TAG, "HTTP Code: ${response.code()}")
+                Log.e(TAG, "HTTP Message: ${response.message()}")
+                Log.e(TAG, "Error Body: $errorBody")
+                Log.e(TAG, "Headers: ${response.headers()}")
+                val errorMsg = errorBody ?: response.message()
+                throw RuntimeException("Server error ${response.code()}: $errorMsg")
             }
 
             val body = response.body() ?: throw RuntimeException("Empty response from server")
@@ -72,7 +90,11 @@ class RemoteModelRunner(
             )
 
         } catch (e: Exception) {
-            Log.e(TAG, "Remote inference failed", e)
+            Log.e(TAG, "=== REMOTE INFERENCE FAILED ===")
+            Log.e(TAG, "Exception type: ${e.javaClass.simpleName}")
+            Log.e(TAG, "Exception message: ${e.message}")
+            Log.e(TAG, "Server URL: ${NetworkClient.getServerUrl()}")
+            e.printStackTrace()
             throw e
         }
     }

@@ -7,8 +7,7 @@ import androidx.lifecycle.LifecycleOwner
 import com.fslr.pansinayan.camera.CameraManager
 import com.fslr.pansinayan.inference.CTCDecoder
 import com.fslr.pansinayan.inference.CtcOutputs
-import com.fslr.pansinayan.inference.ModelRunner
-import com.fslr.pansinayan.inference.PyTorchModelRunner
+import com.fslr.pansinayan.inference.InferenceManager
 import com.fslr.pansinayan.inference.PreprocessingUtils
 import com.fslr.pansinayan.mediapipe.MediaPipeProcessor
 import com.fslr.pansinayan.utils.LabelMapper
@@ -16,10 +15,8 @@ import kotlinx.coroutines.*
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
-import com.fslr.pansinayan.inference.RemoteModelRunner
 import com.fslr.pansinayan.network.NetworkClient
 import com.fslr.pansinayan.utils.ModeManager
-import kotlinx.coroutines.runBlocking
 
 /**
  * Orchestrates the complete recognition pipeline with activity-driven inference.
@@ -65,7 +62,7 @@ class RecognitionPipeline(
     private lateinit var activityDetector: ActivityDetector
     private lateinit var boundaryDetector: SignBoundaryDetector
     private lateinit var inferenceTrigger: InferenceTrigger
-    private lateinit var ctcRunner: ModelRunner
+    private lateinit var inferenceManager: InferenceManager
     private lateinit var ctcAggregator: CtcAggregator
     private var ctcWindowSize: Int = 150
     private lateinit var labelMapper: LabelMapper
@@ -91,9 +88,6 @@ class RecognitionPipeline(
     private val lastKeypointTime = AtomicLong(0)
     private var healthMonitorJob: Job? = null
     private lateinit var modeManager: ModeManager
-    private var remoteRunner: RemoteModelRunner? = null
-    private val isOnlineMode: Boolean
-        get() = modeManager.isOnlineMode()
 
     /**
      * Initialize all components.
@@ -109,32 +103,20 @@ class RecognitionPipeline(
             modeManager = ModeManager(context)
             NetworkClient.initialize(context)
 
-            val mode = modeManager.getCurrentMode()
-            Log.i(TAG, "Current mode: $mode")
-
-            when (mode) {
-                ModeManager.InferenceMode.OFFLINE -> {
-                    // Load local PyTorch Lite model
-                    context.assets.open("SignTransformerCtc_best.ptl").close()
-                    ctcRunner = PyTorchModelRunner(
-                        context = context,
-                        assetModelPath = "SignTransformerCtc_best.ptl",
-                        metadataPath = "SignTransformerCtc_best.model.json"
-                    )
-                    Log.i(TAG, "Loaded local PyTorch Lite model")
-                }
-                ModeManager.InferenceMode.ONLINE -> {
-                    // Use remote model runner
-                    remoteRunner = RemoteModelRunner(
-                        context = context,
-                        metadataPath = "SignTransformerCtc_best.model.json"
-                    )
-                    ctcRunner = createRemoteRunnerWrapper(remoteRunner!!)
-                    Log.i(TAG, "Using remote server for inference")
-                }
+            // Initialize InferenceManager (handles both online/offline with lazy loading)
+            inferenceManager = InferenceManager(context, modeManager)
+            
+            // Get metadata (blocking call during initialization is acceptable)
+            val metadata = runBlocking {
+                inferenceManager.getMetadata()
             }
-
-            ctcWindowSize = ctcRunner.meta.window_size_hint
+            if (metadata != null) {
+                ctcWindowSize = metadata.window_size_hint
+                Log.i(TAG, "InferenceManager initialized, window size: $ctcWindowSize")
+            } else {
+                Log.w(TAG, "Could not get metadata, using default window size")
+                ctcWindowSize = 150
+            }
             
             // Initialize activity-driven components
             // Uses improved defaults: separate arm/hand thresholds, percentile filtering, jitter filtering
@@ -163,28 +145,9 @@ class RecognitionPipeline(
         }
     }
 
-    /**
-     * Create wrapper that bridges RemoteModelRunner to ModelRunner interface.
-     */
-    private fun createRemoteRunnerWrapper(remote: RemoteModelRunner): ModelRunner {
-        return object : ModelRunner {
-            override val meta = remote.meta
-
-            override fun run(sequence: Array<FloatArray>): CtcOutputs {
-                // Block and wait for remote result
-                return runBlocking {
-                    remote.runAsync(sequence)
-                }
-            }
-
-            override fun release() {
-                remote.release()
-            }
-        }
-    }
 
     /**
-     * Switch between online and offline mode at runtime.
+     * Switch between online and offline mode at runtime (non-blocking).
      */
     fun switchMode(newMode: ModeManager.InferenceMode) {
         pipelineScope.launch(Dispatchers.IO) {
@@ -192,38 +155,18 @@ class RecognitionPipeline(
                 Log.i(TAG, "Switching to $newMode mode...")
                 isPaused.set(true)
 
-                // Release current runner
-                try { ctcRunner.release() } catch (_: Throwable) {}
-                remoteRunner = null
+                // Use InferenceManager for mode switching (non-blocking, lazy initialization)
+                val result = inferenceManager.switchMode(newMode)
+                result.getOrThrow()
 
-                // Load new runner
-                when (newMode) {
-                    ModeManager.InferenceMode.OFFLINE -> {
-                        ctcRunner = PyTorchModelRunner(
-                            context = context,
-                            assetModelPath = "SignTransformerCtc_best.ptl",
-                            metadataPath = "SignTransformerCtc_best.model.json"
-                        )
-                    }
-                    ModeManager.InferenceMode.ONLINE -> {
-                        // Test connection first
-                        val isConnected = NetworkClient.testConnection()
-                        if (!isConnected) {
-                            throw RuntimeException("Cannot connect to server")
-                        }
-
-                        remoteRunner = RemoteModelRunner(
-                            context = context,
-                            metadataPath = "SignTransformerCtc_best.model.json"
-                        )
-                        ctcRunner = createRemoteRunnerWrapper(remoteRunner!!)
-                    }
-                }
-
-                // Update mode manager
+                // Update mode manager (persist the mode)
                 modeManager.setMode(newMode)
 
-                // Reset pipeline state
+                // Reset pipeline state - CRITICAL: Reset frame counter FIRST before clearing buffer
+                // This ensures frame indices are consistent between buffer and boundary detector
+                frameCounter.set(0)
+                Log.d(TAG, "Pipeline frame counter reset to 0")
+                
                 bufferManager.clear()
                 activityDetector.reset()
                 boundaryDetector.resetToIdle()
@@ -236,8 +179,18 @@ class RecognitionPipeline(
                 lastFrameTime.set(System.currentTimeMillis())
                 lastKeypointTime.set(System.currentTimeMillis())
                 isPaused.set(false)
+                
+                Log.i(TAG, "All pipeline components reset - ready for $newMode mode")
 
                 Log.i(TAG, "Mode switch completed: $newMode")
+                
+                // Verify mode was set correctly
+                val actualMode = modeManager.getCurrentMode()
+                if (actualMode != newMode) {
+                    Log.e(TAG, "Mode mismatch! Expected: $newMode, Actual: $actualMode")
+                } else {
+                    Log.i(TAG, "Mode verified: $actualMode")
+                }
 
                 // Notify on main thread
                 withContext(Dispatchers.Main) {
@@ -246,6 +199,9 @@ class RecognitionPipeline(
                         "Switched to ${newMode.name} mode",
                         android.widget.Toast.LENGTH_SHORT
                     ).show()
+                    
+                    // Log mode for debugging
+                    Log.i(TAG, "Mode switch UI notification - Mode: $newMode")
                 }
 
             } catch (t: Throwable) {
@@ -352,6 +308,13 @@ class RecognitionPipeline(
                 }
                 
                 val (activityState, currentMotion) = activityDetector.processFrame(keypoints)
+                
+                // Enhanced logging for ONLINE mode debugging
+                val isOnline = modeManager.getCurrentMode() == ModeManager.InferenceMode.ONLINE
+                if (isOnline && currentFrame % 30 == 0) {
+                    Log.d(TAG, "Frame $currentFrame: activity=$activityState, motion=$currentMotion, " +
+                            "boundary=${boundaryDetector.getState()}, buffer=${bufferManager.getBufferSize()}")
+                }
                 
                 // Process sign boundary detection
                 val boundaryEvent = boundaryDetector.processActivity(activityState, currentMotion, currentFrame)
@@ -461,11 +424,23 @@ class RecognitionPipeline(
 
             val startTime = System.currentTimeMillis()
             val clampedSeq = PreprocessingUtils.clamp01(windowSeq)
-            val outputs = ctcRunner.run(clampedSeq)
+            
+            // Log mode for debugging
+            val currentMode = modeManager.getCurrentMode()
+            Log.i(TAG, "Running inference - Mode: ${currentMode.name}")
+            
+            // Use InferenceManager (handles async, fallback automatically)
+            val outputs = inferenceManager.runInference(clampedSeq)
             val infMs = System.currentTimeMillis() - startTime
             totalInferenceTimeMs += infMs
             inferenceCount += 1
             val logProbs = outputs.logProbs[0] // [T, num_ctc]
+
+            // Get metadata for decoding
+            val metadata = inferenceManager.getMetadata() ?: run {
+                Log.e(TAG, "Cannot get metadata for decoding")
+                return
+            }
 
             if (debugLogging) {
                 val T = logProbs.size
@@ -486,11 +461,11 @@ class RecognitionPipeline(
                     val head = arg.take(minOf(20, arg.size)).joinToString(",")
                     val tail = arg.takeLast(minOf(10, arg.size)).joinToString(",")
                     val pct = (modeCnt * 100) / T
-                    Log.i(TAG, "CTC debug: mode=$modeId (${pct}%), blank=${ctcRunner.meta.blank_id}, head=[$head], tail=[$tail]")
+                    Log.i(TAG, "CTC debug: mode=$modeId (${pct}%), blank=${metadata.blank_id}, head=[$head], tail=[$tail]")
                 }
             }
 
-            val tokens = CTCDecoder.greedy(logProbs, ctcRunner.meta.blank_id)
+            val tokens = CTCDecoder.greedy(logProbs, metadata.blank_id)
             val CONFIDENCE_THRESHOLD = 0f  // Set to 0 to allow all model outputs
             val filteredTokens = tokens.filter { it.confidence >= CONFIDENCE_THRESHOLD }
 
@@ -572,7 +547,44 @@ class RecognitionPipeline(
             }
             Log.d(TAG, "Boundary detector reset - ready for next sign")
         } catch (e: Exception) {
-            Log.e(TAG, "CTC inference failed", e)
+            val currentMode = modeManager.getCurrentMode()
+            Log.e(TAG, "=== CTC INFERENCE FAILED ===")
+            Log.e(TAG, "Mode: ${currentMode.name}")
+            Log.e(TAG, "Is online: ${currentMode == ModeManager.InferenceMode.ONLINE}")
+            Log.e(TAG, "Exception type: ${e.javaClass.simpleName}")
+            Log.e(TAG, "Exception message: ${e.message}")
+            
+            // Log specific error details for online mode
+            if (currentMode == ModeManager.InferenceMode.ONLINE) {
+                when (e) {
+                    is java.net.UnknownHostException -> {
+                        Log.e(TAG, "Server URL unreachable - check Cloudflare tunnel")
+                        Log.e(TAG, "Server URL: ${NetworkClient.getServerUrl()}")
+                    }
+                    is java.net.SocketTimeoutException -> {
+                        Log.e(TAG, "Server request timeout - check network connection")
+                    }
+                    is retrofit2.HttpException -> {
+                        var errorBody: String? = null
+                        try {
+                            errorBody = e.response()?.errorBody()?.string()
+                        } catch (ex: Exception) {
+                            Log.e(TAG, "Failed to read error body: ${ex.message}")
+                        }
+                        Log.e(TAG, "Server HTTP error: ${e.code()} ${e.message()}")
+                        Log.e(TAG, "Error body: $errorBody")
+                        Log.e(TAG, "Error response headers: ${e.response()?.headers()}")
+                    }
+                    is java.io.IOException -> {
+                        Log.e(TAG, "Network IO error: ${e.message}")
+                    }
+                    else -> {
+                        Log.e(TAG, "Unexpected error in online mode", e)
+                    }
+                }
+            }
+            
+            e.printStackTrace()
         }
     }
 
@@ -741,7 +753,9 @@ class RecognitionPipeline(
         
         cameraManager.release()
         mediaPipeProcessor.release()
-        ctcRunner.release()
+        if (::inferenceManager.isInitialized) {
+            inferenceManager.release()
+        }
         
         Log.i(TAG, "All resources released")
     }
@@ -806,21 +820,29 @@ class RecognitionPipeline(
                 // Pause processing
                 isPaused.set(true)
 
-                // Release previous runner
-                try { ctcRunner.release() } catch (_: Throwable) {}
+                // Note: switchModel only works for offline mode
+                // For online mode, model type is determined by server
+                if (modeManager.getCurrentMode() != ModeManager.InferenceMode.OFFLINE) {
+                    Log.w(TAG, "Model switching only available in offline mode")
+                    isPaused.set(false)
+                    return@launch
+                }
 
-                // Instantiate new runner (PyTorch only)
+                // Validate model path
                 if (!(ptPath.endsWith(".pt") || ptPath.endsWith(".ptl"))) {
                     throw IllegalArgumentException("PyTorch model path must end with .pt or .ptl")
                 }
-                ctcRunner = PyTorchModelRunner(
-                    context = context,
-                    assetModelPath = ptPath,
-                    metadataPath = metadataPath
-                )
 
-                // Update window size from new metadata
-                ctcWindowSize = ctcRunner.meta.window_size_hint
+                // For now, model switching requires app restart
+                // TODO: Enhance InferenceManager to support model switching
+                Log.w(TAG, "Model switching via switchModel() not fully supported with InferenceManager")
+                Log.w(TAG, "Please restart the app to change models")
+                
+                // Get metadata from current InferenceManager
+                val metadata = inferenceManager.getMetadata()
+                if (metadata != null) {
+                    ctcWindowSize = metadata.window_size_hint
+                }
 
                 // Rebuild buffer and aggregator
                 bufferManager.clear()
@@ -842,8 +864,10 @@ class RecognitionPipeline(
                 // Warm-up run with a zero window to allocate tensors
                 try {
                     val dummy = Array(ctcWindowSize) { FloatArray(178) { 0f } }
-                    ctcRunner.run(dummy)
-                } catch (_: Throwable) {}
+                    inferenceManager.runInference(dummy)
+                } catch (_: Throwable) {
+                    // Ignore warm-up errors
+                }
 
                 // Resume
                 lastFrameTime.set(System.currentTimeMillis())

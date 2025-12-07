@@ -37,7 +37,7 @@ Create a `.env` file with the following settings:
 ```env
 HOST=0.0.0.0         # Required for Vast.AI
 PORT=8000            # Default port
-DEVICE=cuda          # Use GPU
+DEVICE=cpu           # Use CPU
 CORS_ORIGINS=["*"]   # Must be JSON array format
 ```
 

@@ -5,9 +5,11 @@ import android.util.Log
 /**
  * Detects sign boundaries (start and end) based on activity patterns.
  * 
- * Monitors activity state transitions and motion patterns to identify
- * when individual signs begin and end. This enables inference to be
- * triggered only when complete signs are captured.
+ * Simple state machine:
+ * - IDLE → SIGN_ACTIVE: Sign starts when signer moves (ACTIVE/TRANSITION detected)
+ * - SIGN_ACTIVE → SIGN_COMPLETE: Sign ends when idle for holdPeriodMs
+ * 
+ * This enables inference to be triggered only when complete signs are captured.
  */
 class SignBoundaryDetector(
     private val minSignDurationMs: Long = 500L,
@@ -21,9 +23,7 @@ class SignBoundaryDetector(
 
     enum class SignState {
         IDLE,           // No sign activity
-        SIGN_STARTING,  // Sign may be starting
         SIGN_ACTIVE,    // Sign is actively being performed
-        SIGN_ENDING,    // Sign may be ending
         SIGN_COMPLETE   // Sign completed, ready for inference
     }
 
@@ -64,16 +64,8 @@ class SignBoundaryDetector(
                 handleIdleState(activityState, currentMotion, currentTime, frameIndex)
             }
             
-            SignState.SIGN_STARTING -> {
-                handleStartingState(activityState, currentMotion, currentTime, frameIndex)
-            }
-            
             SignState.SIGN_ACTIVE -> {
                 handleActiveState(activityState, currentMotion, currentTime, frameIndex)
-            }
-            
-            SignState.SIGN_ENDING -> {
-                handleEndingState(activityState, currentMotion, currentTime, frameIndex)
             }
             
             SignState.SIGN_COMPLETE -> {
@@ -91,42 +83,22 @@ class SignBoundaryDetector(
         time: Long,
         frame: Int
     ): BoundaryEvent? {
-        if (activityState == ActivityDetector.ActivityState.ACTIVE) {
-            // Check for motion spike (sign start indicator)
-            val isSpike = motion >= baselineMotion * motionSpikeMultiplier
-            
-            if (isSpike || activityState == ActivityDetector.ActivityState.ACTIVE) {
-                signStartTime = time
-                signStartFrame = frame
-                lastActiveTime = time
-                lastActiveFrame = frame
-                currentState = SignState.SIGN_STARTING
-                Log.d(TAG, "Sign STARTING detected at frame $frame (motion: $motion)")
-                return BoundaryEvent.SignStart(signStartFrame, signStartTime)
-            }
+        // Sign starts when signer moves (ACTIVE state)
+        // Accept both ACTIVE and TRANSITION as motion detected
+        if (activityState == ActivityDetector.ActivityState.ACTIVE || 
+            activityState == ActivityDetector.ActivityState.TRANSITION) {
+            // Sign detected - immediately transition to SIGN_ACTIVE
+            signStartTime = time
+            signStartFrame = frame
+            lastActiveTime = time
+            lastActiveFrame = frame
+            currentState = SignState.SIGN_ACTIVE
+            Log.i(TAG, "Sign STARTED at frame $frame (activity=$activityState, motion=$motion)")
+            return BoundaryEvent.SignStart(signStartFrame, signStartTime)
         }
         return null
     }
 
-    private fun handleStartingState(
-        activityState: ActivityDetector.ActivityState,
-        motion: Float,
-        time: Long,
-        frame: Int
-    ): BoundaryEvent? {
-        if (activityState == ActivityDetector.ActivityState.ACTIVE) {
-            // Motion sustained - sign is active
-            lastActiveTime = time
-            lastActiveFrame = frame
-            currentState = SignState.SIGN_ACTIVE
-            Log.d(TAG, "Sign ACTIVE at frame $frame")
-        } else if (activityState == ActivityDetector.ActivityState.IDLE) {
-            // Activity stopped too quickly - false start
-            currentState = SignState.IDLE
-            Log.d(TAG, "False start - returning to IDLE")
-        }
-        return null
-    }
 
     private fun handleActiveState(
         activityState: ActivityDetector.ActivityState,
@@ -137,16 +109,20 @@ class SignBoundaryDetector(
         // Check for max duration (force completion)
         val signDuration = time - signStartTime
         if (signDuration >= maxSignDurationMs) {
-            Log.d(TAG, "Sign max duration reached - forcing completion")
+            Log.i(TAG, "Sign max duration reached - forcing completion at frame $frame")
             currentState = SignState.SIGN_COMPLETE
             return BoundaryEvent.SignEnd(lastActiveFrame, time, true)
         }
 
-        if (activityState == ActivityDetector.ActivityState.ACTIVE) {
+        // Sign continues while signer is moving (ACTIVE or TRANSITION)
+        if (activityState == ActivityDetector.ActivityState.ACTIVE || 
+            activityState == ActivityDetector.ActivityState.TRANSITION) {
+            // Update last active time/frame
             lastActiveTime = time
             lastActiveFrame = frame
+            holdStartTime = 0L  // Reset hold timer if motion resumes
         } else if (activityState == ActivityDetector.ActivityState.IDLE) {
-            // Activity stopped - sign may be ending
+            // Sign ends when idle - start hold timer
             if (holdStartTime == 0L) {
                 holdStartTime = time
             }
@@ -157,53 +133,19 @@ class SignBoundaryDetector(
                 val signDuration = time - signStartTime
                 if (signDuration >= minSignDurationMs) {
                     currentState = SignState.SIGN_COMPLETE
-                    Log.d(TAG, "Sign END detected at frame $frame (duration: ${signDuration}ms)")
+                    Log.i(TAG, "Sign ENDED at frame $frame (duration: ${signDuration}ms, hold: ${holdDuration}ms)")
                     return BoundaryEvent.SignEnd(lastActiveFrame, time, false)
                 } else {
-                    // Too short - false sign
-                    Log.d(TAG, "Sign too short (${signDuration}ms) - ignoring")
+                    // Too short - false sign, reset
+                    Log.d(TAG, "Sign too short (${signDuration}ms) - ignoring and resetting")
                     reset()
                 }
-            } else {
-                currentState = SignState.SIGN_ENDING
             }
+            // Still in hold period - wait
         }
         return null
     }
 
-    private fun handleEndingState(
-        activityState: ActivityDetector.ActivityState,
-        motion: Float,
-        time: Long,
-        frame: Int
-    ): BoundaryEvent? {
-        if (activityState == ActivityDetector.ActivityState.ACTIVE) {
-            // Activity resumed - sign continues
-            holdStartTime = 0L
-            lastActiveTime = time
-            lastActiveFrame = frame
-            currentState = SignState.SIGN_ACTIVE
-            Log.d(TAG, "Sign resumed - back to ACTIVE")
-        } else {
-            // Still idle - check hold period
-            if (holdStartTime == 0L) {
-                holdStartTime = time
-            }
-            
-            val holdDuration = time - holdStartTime
-            if (holdDuration >= holdPeriodMs) {
-                val signDuration = time - signStartTime
-                if (signDuration >= minSignDurationMs) {
-                    currentState = SignState.SIGN_COMPLETE
-                    Log.d(TAG, "Sign END detected at frame $frame (duration: ${signDuration}ms)")
-                    return BoundaryEvent.SignEnd(lastActiveFrame, time, false)
-                } else {
-                    reset()
-                }
-            }
-        }
-        return null
-    }
 
     /**
      * Get current sign state.

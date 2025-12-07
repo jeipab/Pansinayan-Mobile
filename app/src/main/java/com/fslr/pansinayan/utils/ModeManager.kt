@@ -34,6 +34,15 @@ class ModeManager(context: Context) {
         prefs.edit().putString(KEY_MODE, modeStr).apply()
         Log.i(TAG, "Mode set to: $mode")
     }
+    
+    /**
+     * Reset mode to OFFLINE (default).
+     * Call this when exiting or starting fresh.
+     */
+    fun resetToOffline() {
+        prefs.edit().putString(KEY_MODE, MODE_OFFLINE).apply()
+        Log.i(TAG, "Mode reset to OFFLINE")
+    }
 
     fun isOnlineMode(): Boolean = getCurrentMode() == InferenceMode.ONLINE
     fun isOfflineMode(): Boolean = getCurrentMode() == InferenceMode.OFFLINE

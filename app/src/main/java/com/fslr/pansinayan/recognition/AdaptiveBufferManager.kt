@@ -249,12 +249,14 @@ class AdaptiveBufferManager(
 
     /**
      * Clear buffer.
+     * Resets both frame counter and offset to ensure frame indices start from 0.
      */
     @Synchronized
     fun clear() {
         buffer.clear()
         frameCounter = 0
-        Log.d(TAG, "Buffer cleared")
+        frameOffset = 0  // CRITICAL: Reset offset to ensure frame indices start from 0
+        Log.d(TAG, "Buffer cleared - frame counter and offset reset to 0")
     }
 
     /**

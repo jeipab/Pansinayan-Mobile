@@ -88,6 +88,7 @@ class MainActivity : AppCompatActivity() {
     private var longPressStartTime = 0L
     private var longPressStartTimeConfig = 0L
     private val longPressThreshold = 500L
+    private var isUpdatingSwitchProgrammatically = false  // Flag to prevent listener from firing when setting switch programmatically
 
     // Recognition pipeline
     private lateinit var recognitionPipeline: RecognitionPipeline
@@ -316,8 +317,13 @@ class MainActivity : AppCompatActivity() {
             onBackPressedDispatcher.onBackPressed()
         }
 
-        // Mode switch
+        // Mode switch - use a flag to prevent listener from firing when we set programmatically
         switchMode.setOnCheckedChangeListener { _, isChecked ->
+            // Ignore if we're updating programmatically
+            if (isUpdatingSwitchProgrammatically) {
+                return@setOnCheckedChangeListener
+            }
+            
             val newMode = if (isChecked) {
                 ModeManager.InferenceMode.ONLINE
             } else {
@@ -325,7 +331,15 @@ class MainActivity : AppCompatActivity() {
             }
 
             if (::recognitionPipeline.isInitialized) {
+                Log.i(TAG, "User switched mode to: $newMode")
                 recognitionPipeline.switchMode(newMode)
+                // UI will be synced in onResume after mode switch completes
+            } else {
+                Log.w(TAG, "Cannot switch mode - pipeline not initialized")
+                // Revert UI state if pipeline not ready
+                isUpdatingSwitchProgrammatically = true
+                switchMode.isChecked = !isChecked
+                isUpdatingSwitchProgrammatically = false
             }
         }
         
@@ -353,11 +367,8 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        // Initialize switch state
-        if (::recognitionPipeline.isInitialized) {
-            val currentMode = recognitionPipeline.getCurrentMode()
-            switchMode.isChecked = (currentMode == ModeManager.InferenceMode.ONLINE)
-        }
+        // Initialize switch state - will be set after pipeline initialization
+        // Don't set it here as pipeline might not be initialized yet
 
         // Server settings button
         btnServerSettings.setOnClickListener {
@@ -515,6 +526,11 @@ class MainActivity : AppCompatActivity() {
      */
     private fun setupRecognitionPipeline() {
         try {
+            // Always start with OFFLINE mode (reset any persisted mode)
+            val modeManager = ModeManager(this)
+            modeManager.resetToOffline()
+            Log.i(TAG, "Reset mode to OFFLINE for fresh start")
+            
             recognitionPipeline = RecognitionPipeline(
                 context = this,
                 lifecycleOwner = this,
@@ -529,6 +545,13 @@ class MainActivity : AppCompatActivity() {
 
             recognitionPipeline.initialize()
             Log.i(TAG, "Recognition pipeline initialized")
+            
+            // Sync UI with actual mode after initialization (prevent listener from firing)
+            val currentMode = recognitionPipeline.getCurrentMode()
+            isUpdatingSwitchProgrammatically = true
+            switchMode.isChecked = (currentMode == ModeManager.InferenceMode.ONLINE)
+            isUpdatingSwitchProgrammatically = false
+            Log.i(TAG, "UI switch synchronized with mode: $currentMode")
 
             // Start periodic stats update
             startStatsUpdater()
@@ -717,6 +740,13 @@ class MainActivity : AppCompatActivity() {
         super.onResume()
         
         if (hasCameraPermission() && ::recognitionPipeline.isInitialized) {
+            // Sync UI with actual mode (in case mode was changed while paused)
+            val currentMode = recognitionPipeline.getCurrentMode()
+            isUpdatingSwitchProgrammatically = true
+            switchMode.isChecked = (currentMode == ModeManager.InferenceMode.ONLINE)
+            isUpdatingSwitchProgrammatically = false
+            Log.i(TAG, "Resumed - UI switch synchronized with mode: $currentMode")
+            
             recognitionPipeline.start()
             Log.i(TAG, "Pipeline started")
             
@@ -738,6 +768,13 @@ class MainActivity : AppCompatActivity() {
 
     override fun onDestroy() {
         super.onDestroy()
+        
+        // Reset mode to OFFLINE when exiting (so next time starts fresh)
+        if (::recognitionPipeline.isInitialized) {
+            val modeManager = ModeManager(this)
+            modeManager.resetToOffline()
+            Log.i(TAG, "Reset mode to OFFLINE on exit")
+        }
         
         // Unregister broadcast receiver
         try {
