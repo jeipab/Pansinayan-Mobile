@@ -47,7 +47,7 @@ class Settings(BaseSettings):
     DEVICE: str = "cuda"  # "cuda" or "cpu"
     
     # API Settings
-    CORS_ORIGINS: list = ["*"]  # Restrict in production
+    CORS_ORIGINS: str = "*"  # Restrict in production
     MAX_CONTENT_LENGTH: int = 10 * 1024 * 1024  # 10 MB
     
     class Config:

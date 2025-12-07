@@ -87,19 +87,46 @@ mkdir -p pansinayan
 cd pansinayan
 
 # Download server package from Google Drive
-gdown <file id>
+gdown 1DQz7cjMXBQExDbVJpI7KIKZLuLbO2MG6
 
 # Extract
 tar -xzf pansinayan_server.tar.gz
 
-# Remove archive to save space
-rm pansinayan_server.tar.gz
+# ------------------------------------------------------------
+# CHECK PYTHON VERSION (Python 3.12 is default on Vast/Ubuntu 24.04)
+# ------------------------------------------------------------
+python3 --version
+# You will see: Python 3.12.x   (Torch 2.1.0 is NOT compatible)
 
-cd server
+# ------------------------------------------------------------
+# INSTALL PYTHON 3.11 USING MINICONDA (apt cannot install 3.11)
+# ------------------------------------------------------------
 
-# Setup virtual environment
-python3 -m venv ../venv
-source ../venv/bin/activate
+# Download Miniconda
+wget https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh
+
+# Install (press ENTER, accept defaults)
+bash Miniconda3-latest-Linux-x86_64.sh
+
+# Reload environment so conda works
+source ~/.bashrc
+
+# ------------------------------------------------------------
+# CREATE PYTHON 3.11 ENVIRONMENT (Torch 2.1.0 requires <= 3.11)
+# ------------------------------------------------------------
+conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/main
+
+conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/r
+
+conda create -n py311 python=3.11 -y
+conda activate py311
+
+# ------------------------------------------------------------
+# (Optional) Verify Python version
+# ------------------------------------------------------------
+python --version   # Should now show: Python 3.11.x
+
+cd pansinayan
 
 # Install dependencies
 pip install --no-cache-dir -r requirements.txt
@@ -109,11 +136,14 @@ cat > .env << 'EOF'
 HOST=0.0.0.0
 PORT=8000
 DEVICE=cuda
-CORS_ORIGINS=["*"]
+CORS_ORIGINS=*
 EOF
+
+pip install "numpy<2"
 
 # Start server
 chmod +x start_server.sh
+sed -i 's/\r$//' start_server.sh
 ./start_server.sh
 ```
 
@@ -153,6 +183,8 @@ screen -r pansinayan
 ### Step 5: Expose Port 8000 via Tunnels
 
 **After server is running, expose it publicly:**
+
+cloudflared tunnel --url http://localhost:8000 --protocol http2
 
 1. In Vast.AI console, go to your instance
 2. Click **"Tunnels (Open New Ports)"** in the sidebar
