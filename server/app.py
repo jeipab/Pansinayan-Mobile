@@ -267,12 +267,16 @@ async def startup_event() -> None:
         logger.info("✓ Configuration valid")
         
         # Set device
-        device = torch.device(settings.DEVICE if torch.cuda.is_available() else "cpu")
-        logger.info(f"Using device: {device}")
-        
-        if torch.cuda.is_available():
+        if settings.DEVICE == "cuda" and torch.cuda.is_available():
+            device = torch.device("cuda")
+            logger.info(f"Using device: {device}")
             logger.info(f"GPU: {torch.cuda.get_device_name(0)}")
             logger.info(f"GPU Memory: {torch.cuda.get_device_properties(0).total_memory / 1e9:.2f} GB")
+        else:
+            device = torch.device("cpu")
+            logger.info(f"Using device: {device}")
+            if settings.DEVICE == "cuda":
+                logger.warning("CUDA requested but not available or incompatible, using CPU")
         
         # Load models independently (allow partial availability)
         transformer = load_transformer_model(device)

@@ -11,7 +11,7 @@ services:
       - ./SignTransformerCtc_best.pt:/app/SignTransformerCtc_best.pt
       - ./MediaPipeGRUCtc_best.pt:/app/MediaPipeGRUCtc_best.pt
     environment:
-      - DEVICE=cuda
+      - DEVICE=cpu  # Using CPU due to RTX 5080 (sm_120) compatibility
       - LOG_LEVEL=info
     deploy:
       resources:

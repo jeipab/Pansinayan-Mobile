@@ -15,7 +15,7 @@ class Settings(BaseSettings):
     # Server Settings
     HOST: str = "0.0.0.0"
     PORT: int = 8000
-    WORKERS: int = 1  # Keep at 1 for GPU inference
+    WORKERS: int = 1  # Keep at 1 for inference (GPU or CPU)
     RELOAD: bool = False
     LOG_LEVEL: str = "info"
     
@@ -44,7 +44,7 @@ class Settings(BaseSettings):
     # Performance Settings
     MAX_SEQUENCE_LENGTH: int = 300
     BATCH_SIZE: int = 1  # Keep at 1 for real-time inference
-    DEVICE: str = "cuda"  # "cuda" or "cpu"
+    DEVICE: str = "cpu"  # "cuda" or "cpu" - Using CPU due to RTX 5080 (sm_120) compatibility
     
     # API Settings
     CORS_ORIGINS: str = "*"  # Restrict in production
