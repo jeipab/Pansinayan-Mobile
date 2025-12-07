@@ -38,7 +38,7 @@ Create a `.env` file with the following settings:
 HOST=0.0.0.0         # Required for Vast.AI
 PORT=8000            # Default port
 DEVICE=cpu           # Use CPU
-CORS_ORIGINS=["*"]   # Must be JSON array format
+CORS_ORIGINS=*       # Must be JSON array format
 ```
 
 ### 4. Start Server
@@ -133,7 +133,7 @@ pip install "numpy<2"
 cat > .env << 'EOF'
 HOST=0.0.0.0
 PORT=8000
-DEVICE=cuda
+DEVICE=cpu
 CORS_ORIGINS=*
 EOF
 
