@@ -2,6 +2,19 @@
 
 FastAPI inference server for Filipino Sign Language recognition.
 
+---
+
+## Table of Contents
+
+- [Quick Start (Local Testing)](#quick-start-local-testing)
+- [Vast.AI Deployment](#vastai-deployment)
+- [API Endpoints](#api-endpoints)
+- [Troubleshooting](#troubleshooting)
+- [Monitoring](#monitoring)
+- [Quick Reference](#quick-reference)
+
+---
+
 ## Quick Start (Local Testing)
 
 ### 1. Install Dependencies
@@ -19,13 +32,9 @@ Ensure these files are in the server directory:
 
 ### 3. Configure Environment
 
-```bash
-cp .env.example .env
-```
+Create a `.env` file with the following settings:
 
-Key settings (create `.env` file):
-
-```
+```env
 HOST=0.0.0.0         # Required for Vast.AI
 PORT=8000            # Default port
 DEVICE=cuda          # Use GPU
@@ -44,7 +53,7 @@ Server starts on `http://0.0.0.0:8000`
 
 ## Vast.AI Deployment
 
-### Step 0: Create/Update Server Package (If Needed)
+### Prerequisites: Create Server Package
 
 **When to do this:**
 
@@ -66,7 +75,7 @@ tar -czf ../pansinayan_server.tar.gz *
 2. Filter: RTX 3060/3090, ≥8GB VRAM
 3. Template: `pytorch/pytorch:2.1.0-cuda11.8-cudnn8-runtime`
 4. Click "RENT"
-5. **Save your instance IP:** xxx.xxx.xxx.xxx
+5. **Save your instance IP:** `xxx.xxx.xxx.xxx`
 
 ### Step 2: Access Jupyter Notebook
 
@@ -74,9 +83,9 @@ tar -czf ../pansinayan_server.tar.gz *
 2. Wait for Jupyter to launch
 3. Open a terminal: **New → Terminal**
 
-### Step 3: Download & Setup via Jupyter Terminal
+### Step 3: Download & Setup
 
-Run these commands in Jupyter terminal:
+Run these commands in the Jupyter terminal:
 
 ```bash
 # Install gdown
@@ -92,44 +101,33 @@ gdown 1DQz7cjMXBQExDbVJpI7KIKZLuLbO2MG6
 # Extract
 tar -xzf pansinayan_server.tar.gz
 
-# ------------------------------------------------------------
-# CHECK PYTHON VERSION (Python 3.12 is default on Vast/Ubuntu 24.04)
-# ------------------------------------------------------------
+# Check Python version (Python 3.12 is default on Vast/Ubuntu 24.04)
 python3 --version
-# You will see: Python 3.12.x   (Torch 2.1.0 is NOT compatible)
-
-# ------------------------------------------------------------
-# INSTALL PYTHON 3.11 USING MINICONDA (apt cannot install 3.11)
-# ------------------------------------------------------------
+# You will see: Python 3.12.x (Torch 2.1.0 is NOT compatible)
 
 # Download Miniconda
 wget https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh
 
-# Install (press ENTER, accept defaults)
+# Install Miniconda (press ENTER, accept defaults)
 bash Miniconda3-latest-Linux-x86_64.sh
 
 # Reload environment so conda works
 source ~/.bashrc
 
-# ------------------------------------------------------------
-# CREATE PYTHON 3.11 ENVIRONMENT (Torch 2.1.0 requires <= 3.11)
-# ------------------------------------------------------------
+# Create Python 3.11 environment (Torch 2.1.0 requires <= 3.11)
 conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/main
-
 conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/r
-
 conda create -n py311 python=3.11 -y
 conda activate py311
 
-# ------------------------------------------------------------
-# (Optional) Verify Python version
-# ------------------------------------------------------------
+# Verify Python version
 python --version   # Should now show: Python 3.11.x
 
 cd pansinayan
 
 # Install dependencies
 pip install --no-cache-dir -r requirements.txt
+pip install "numpy<2"
 
 # Configure - Create .env file with required settings
 cat > .env << 'EOF'
@@ -139,64 +137,61 @@ DEVICE=cuda
 CORS_ORIGINS=*
 EOF
 
-pip install "numpy<2"
-
 # Start server
 chmod +x start_server.sh
 sed -i 's/\r$//' start_server.sh
 ./start_server.sh
 ```
 
-### Step 4: Keep Server Running (Background) - Optional
+### Step 4: Keep Server Running (Optional)
 
-**Why?** If you close the Jupyter terminal in Step 3, the server stops. Use this step to keep the server running even after closing/disconnecting.
+**Why?** If you close the Jupyter terminal, the server stops. Use this step to keep the server running in the background.
 
-**Choose one:**
-
-**Option A:** Server stops when terminal closes (simpler, good for testing)
+**Option A: Foreground (Testing)**
 
 - Just run `./start_server.sh` from Step 3
 - Server stops when you close the terminal
 
-**Option B:** Server keeps running in background (recommended for production)
+**Option B: Background (Production)**
 
-- Install screen:
+1. Install screen:
 
 ```bash
 apt-get update && apt-get install -y screen
 ```
 
-- Start server in background:
+2. Start server in background:
 
 ```bash
-screen -dmS pansinayan bash -c 'cd pansinayan/server && source ../venv/bin/activate && ./start_server.sh'
+screen -dmS pansinayan bash -c 'cd pansinayan && ./start_server.sh'
 ```
 
-- Server now runs in background - you can close terminal!
-- To view logs later:
+3. Server now runs in background - you can close terminal!
+
+4. To view logs later:
 
 ```bash
 screen -r pansinayan
 # Press Ctrl+A then D to detach (keeps server running)
 ```
 
-### Step 5: Expose Port 8000 via Tunnels
+### Step 5: Expose Port via Tunnels
 
 **After server is running, expose it publicly:**
 
-cloudflared tunnel --url http://localhost:8000 --protocol http2
+Run this command in a new terminal (or in a screen session):
 
-1. In Vast.AI console, go to your instance
-2. Click **"Tunnels (Open New Ports)"** in the sidebar
-3. In "Enter target URL" field, type: `http://localhost:8000`
-4. Click **"+ Create New Tunnel"**
-5. Wait for tunnel to be created
-6. **Copy the Tunnel URL** (e.g., `https://xxxx.trycloudflare.com`)
-7. This is your public server URL - use this instead of the IP address!
+```bash
+cloudflared tunnel --url http://localhost:8000 --protocol http2
+```
+
+This will create a public tunnel URL (e.g., `https://xxxx.trycloudflare.com`). **Copy this URL** - this is your public server URL to use instead of the IP address!
+
+**Note:** Keep this terminal/session running to maintain the tunnel. If you close it, the tunnel will stop.
 
 ### Step 6: Test Server
 
-**Visit these URLs in your browser:**
+Visit these URLs in your browser:
 
 1. **Health Check:**
 
@@ -236,39 +231,48 @@ cloudflared tunnel --url http://localhost:8000 --protocol http2
 
 ## API Endpoints
 
-```bash
-# Health check
-GET /health
+### Health Check
 
-# Inference
+```http
+GET /health
+```
+
+### Inference
+
+```http
 POST /predict
+Content-Type: application/json
+
 {
   "keypoints": [[...], [...], ...],  // [T, 178] - Variable length (1-300 frames)
                                       // T is determined by sign-aligned window from activity-based detection
   "model_type": "transformer"         // or "gru"
 }
+```
 
-# Stats
+### Statistics
+
+```http
 GET /stats
 ```
 
-Interactive docs: `http://<INSTANCE_IP>:8000/docs`
+**Interactive API Documentation:** `http://<INSTANCE_IP>:8000/docs`
 
 ---
 
 ## Troubleshooting
 
-**Connection Refused**
+### Connection Refused
 
 ```bash
-# Check server running
+# Check if server is running
 ps aux | grep uvicorn
 
-# Verify .env
+# Verify .env configuration
 grep HOST .env  # Should be: 0.0.0.0
 ```
 
-**CUDA Out of Memory**
+### CUDA Out of Memory
 
 ```bash
 # Edit .env
@@ -279,14 +283,14 @@ nano .env
 pkill -f uvicorn && ./start_server.sh
 ```
 
-**Model Not Found**
+### Model Not Found
 
 ```bash
-# Verify files
+# Verify model files exist
 ls -lh *.pt
 ```
 
-**Slow Inference**
+### Slow Inference
 
 ```bash
 # Check GPU usage
@@ -303,10 +307,10 @@ nvidia-smi
 # View logs
 tail -f logs/server.log
 
-# Monitor GPU
+# Monitor GPU usage
 watch -n 1 nvidia-smi
 
-# Check stats
+# Check server statistics
 curl http://<INSTANCE_IP>:8000/stats
 ```
 
@@ -315,12 +319,12 @@ curl http://<INSTANCE_IP>:8000/stats
 ## Quick Reference
 
 ```bash
-# Activate venv
-source pansinayan/venv/bin/activate
-
 # Start server
-cd pansinayan/server && ./start_server.sh
+cd server && ./start_server.sh
 
-# Restart
+# Restart server
 pkill -f uvicorn && ./start_server.sh
+
+# Check server status
+curl http://localhost:8000/health
 ```
