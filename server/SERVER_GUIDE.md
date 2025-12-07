@@ -96,7 +96,7 @@ mkdir -p pansinayan
 cd pansinayan
 
 # Download server package from Google Drive
-gdown 1DQz7cjMXBQExDbVJpI7KIKZLuLbO2MG6
+gdown 16L05bSHiaDvzXbTtwzoP9lxXFykI08ja
 
 # Extract
 tar -xzf pansinayan_server.tar.gz
